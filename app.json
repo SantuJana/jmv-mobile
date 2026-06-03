@@ -12,13 +12,18 @@
       "backgroundColor": "#004B2D"
     },
     "ios": {
+      "bundleIdentifier": "com.jmv.mobile",
       "supportsTablet": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "JMV Mobile uses your location to show nearby delivery context."
       }
     },
     "android": {
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+      "package": "com.jmv.mobile",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#004B2D",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -36,6 +41,11 @@
           "locationWhenInUsePermission": "Allow JMV Mobile to use your location to show nearby delivery context."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0f54d90e-f3da-4ad4-8c6d-870de50d044a"
+      }
+    }
   }
 }
