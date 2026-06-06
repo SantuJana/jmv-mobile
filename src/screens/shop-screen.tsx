@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   GestureResponderEvent,
   Image,
   Linking,
@@ -33,6 +34,7 @@ import type { ApiResponse, Banner, Cart, Category, PaginationMeta, Product, Prod
 type ShopScreenProps = {
   bottomInset?: number;
   onCartDrop?: (source: CartDropSource) => void;
+  onProductPress: (product: Product) => void;
   onRequireAuth: () => void;
 };
 
@@ -139,12 +141,13 @@ function SkeletonBlock({
   return <View style={[styles.skeletonBlock, { borderRadius: radius, height, width }, style]} />;
 }
 
-export function ShopScreen({ onCartDrop, onRequireAuth, bottomInset = 24 }: ShopScreenProps) {
+export function ShopScreen({ onCartDrop, onProductPress, onRequireAuth, bottomInset = 24 }: ShopScreenProps) {
   const insets = useSafeAreaInsets();
   const { width: viewportWidth } = useWindowDimensions();
   const bannerScrollRef = useRef<ScrollView>(null);
   const categoryScrollRef = useRef<ScrollView>(null);
   const bannerVirtualIndexRef = useRef(0);
+  const bannerSlideX = useRef(new Animated.Value(0)).current;
   const variantSheetTranslateY = useRef(new Animated.Value(0)).current;
   const cartToastOpacity = useRef(new Animated.Value(0)).current;
   const cartToastTranslateY = useRef(new Animated.Value(18)).current;
@@ -191,6 +194,19 @@ export function ShopScreen({ onCartDrop, onRequireAuth, bottomInset = 24 }: Shop
   );
 
   useEffect(() => {
+    const listenerId = bannerSlideX.addListener(({ value }) => {
+      bannerScrollRef.current?.scrollTo({
+        animated: false,
+        x: value
+      });
+    });
+
+    return () => {
+      bannerSlideX.removeListener(listenerId);
+    };
+  }, [bannerSlideX]);
+
+  useEffect(() => {
     const initialVirtualIndex = banners.length > 1 ? 1 : 0;
 
     bannerVirtualIndexRef.current = initialVirtualIndex;
@@ -213,16 +229,35 @@ export function ShopScreen({ onCartDrop, onRequireAuth, bottomInset = 24 }: Shop
       const nextVirtualIndex = bannerVirtualIndexRef.current + 1;
       const nextRealIndex = nextVirtualIndex > banners.length ? 0 : nextVirtualIndex - 1;
 
-      bannerVirtualIndexRef.current = nextVirtualIndex;
       setActiveBannerIndex(nextRealIndex);
-      bannerScrollRef.current?.scrollTo({
-        animated: true,
-        x: nextVirtualIndex * bannerSnapInterval
+      bannerSlideX.stopAnimation();
+      bannerSlideX.setValue(bannerVirtualIndexRef.current * bannerSnapInterval);
+      Animated.timing(bannerSlideX, {
+        duration: 620,
+        easing: Easing.inOut(Easing.cubic),
+        toValue: nextVirtualIndex * bannerSnapInterval,
+        useNativeDriver: false
+      }).start(({ finished }) => {
+        if (!finished) {
+          return;
+        }
+
+        if (nextVirtualIndex > banners.length) {
+          bannerVirtualIndexRef.current = 1;
+          bannerSlideX.setValue(bannerSnapInterval);
+          bannerScrollRef.current?.scrollTo({
+            animated: false,
+            x: bannerSnapInterval
+          });
+          return;
+        }
+
+        bannerVirtualIndexRef.current = nextVirtualIndex;
       });
     }, BANNER_AUTO_SLIDE_MS);
 
     return () => clearInterval(timer);
-  }, [bannerSnapInterval, banners.length]);
+  }, [bannerSlideX, bannerSnapInterval, banners.length]);
 
   const categoryOptions = useMemo<CategoryOption[]>(
     () => [
@@ -914,7 +949,11 @@ export function ShopScreen({ onCartDrop, onRequireAuth, bottomInset = 24 }: Shop
 
               return (
                 <View key={product.id} style={styles.productCard}>
-                  <View style={styles.productImageContainer}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => onProductPress(product)}
+                    style={({ pressed }) => [styles.productImageContainer, pressed ? styles.productPressablePressed : null]}
+                  >
                     {imageUri ? (
                       <Image resizeMode="cover" source={{ uri: imageUri }} style={styles.productImage} />
                     ) : (
@@ -926,18 +965,20 @@ export function ShopScreen({ onCartDrop, onRequireAuth, bottomInset = 24 }: Shop
                     <View style={styles.offerBadge}>
                       <Text style={styles.offerBadgeText}>Fresh</Text>
                     </View>
-                  </View>
+                  </Pressable>
 
                   <View style={styles.productBody}>
-                    <View style={styles.productMetaPill}>
-                      <Text numberOfLines={1} style={styles.productMeta}>
-                        {product.category.name}
-                      </Text>
-                    </View>
+                    <Pressable accessibilityRole="button" onPress={() => onProductPress(product)}>
+                      <View style={styles.productMetaPill}>
+                        <Text numberOfLines={1} style={styles.productMeta}>
+                          {product.category.name}
+                        </Text>
+                      </View>
 
-                    <Text numberOfLines={2} style={styles.productName}>
-                      {product.name}
-                    </Text>
+                      <Text numberOfLines={2} style={styles.productName}>
+                        {product.name}
+                      </Text>
+                    </Pressable>
 
                     {cheapestVariant ? (
                       <Text style={styles.productPrice}>
@@ -1444,12 +1485,12 @@ const styles = StyleSheet.create({
   productCard: {
     backgroundColor: COLORS.surface,
     borderColor: "rgba(31,35,48,0.08)",
-    borderRadius: 22,
+    borderRadius: 12,
     borderWidth: 1,
-    marginBottom: 16,
+    marginBottom: 10,
     minHeight: 248,
     overflow: "hidden",
-    width: "48%"
+    width: "49.1%"
   },
   productImageContainer: {
     alignItems: "center",
@@ -1458,6 +1499,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
     position: "relative"
+  },
+  productPressablePressed: {
+    opacity: 0.9
   },
   productImage: {
     height: "100%",

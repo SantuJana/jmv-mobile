@@ -1,15 +1,16 @@
-import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { Animated, Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Animated, BackHandler, Image, Pressable, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AccountScreen } from "./src/screens/account-screen";
 import { CartScreen } from "./src/screens/cart-screen";
 import { OrdersScreen } from "./src/screens/orders-screen";
+import { ProductDetailScreen } from "./src/screens/product-detail-screen";
 import { ShopScreen, type CartDropSource } from "./src/screens/shop-screen";
 import { AuthProvider } from "./src/providers/auth-provider";
 import { COLORS, ELEVATION, FONTS } from "./src/theme/design";
+import type { Product } from "./src/types/api";
 
 type AppTab = "shop" | "cart" | "orders" | "account";
 
@@ -42,6 +43,8 @@ function AppShell() {
   const cartDropIdRef = useRef(0);
   const [activeTab, setActiveTab] = useState<AppTab>("shop");
   const [flyingCartItem, setFlyingCartItem] = useState<FlyingCartItem | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const isProductDetailActive = activeTab === "shop" && Boolean(selectedProduct);
   const tabBarBottom = Math.max(insets.bottom, 10);
   const tabBarHeight = 66;
   const scrollBottomInset = tabBarHeight + tabBarBottom + 10;
@@ -160,38 +163,81 @@ function AppShell() {
     ]
   );
 
-  const activeScreen = useMemo(() => {
-    if (activeTab === "shop") {
-      return (
-        <ShopScreen
-          bottomInset={scrollBottomInset}
-          onCartDrop={playCartDropAnimation}
-          onRequireAuth={() => setActiveTab("account")}
-        />
-      );
-    }
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (selectedProduct) {
+        setSelectedProduct(null);
+        return true;
+      }
 
-    if (activeTab === "cart") {
-      return (
-        <CartScreen
-          bottomInset={scrollBottomInset}
-          onOrderPlaced={() => setActiveTab("orders")}
-          onRequireAuth={() => setActiveTab("account")}
-        />
-      );
-    }
+      if (activeTab !== "shop") {
+        setActiveTab("shop");
+        return true;
+      }
 
-    if (activeTab === "orders") {
-      return <OrdersScreen bottomInset={scrollBottomInset} onRequireAuth={() => setActiveTab("account")} />;
-    }
+      return false;
+    });
 
-    return <AccountScreen />;
-  }, [activeTab, playCartDropAnimation, scrollBottomInset]);
+    return () => subscription.remove();
+  }, [activeTab, selectedProduct]);
+
+  const switchTab = useCallback((tab: AppTab) => {
+    setSelectedProduct(null);
+    setActiveTab(tab);
+  }, []);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar style="dark" />
-      <View style={styles.screen}>{activeScreen}</View>
+    <View style={[styles.root, { paddingTop: isProductDetailActive ? 0 : insets.top }]}>
+      <StatusBar backgroundColor="transparent" barStyle="dark-content" translucent={isProductDetailActive} />
+      <View style={styles.screen}>
+        <View
+          pointerEvents={activeTab === "shop" ? "auto" : "none"}
+          style={[styles.tabScreen, activeTab === "shop" ? styles.tabScreenActive : styles.tabScreenHidden]}
+        >
+          <ShopScreen
+            bottomInset={scrollBottomInset}
+            onCartDrop={playCartDropAnimation}
+            onProductPress={setSelectedProduct}
+            onRequireAuth={() => switchTab("account")}
+          />
+          {selectedProduct ? (
+            <View style={styles.detailOverlay}>
+              <ProductDetailScreen
+                bottomInset={scrollBottomInset}
+                onBack={() => setSelectedProduct(null)}
+                onCartDrop={playCartDropAnimation}
+                onRequireAuth={() => switchTab("account")}
+                product={selectedProduct}
+              />
+            </View>
+          ) : null}
+        </View>
+
+        <View
+          pointerEvents={activeTab === "cart" ? "auto" : "none"}
+          style={[styles.tabScreen, activeTab === "cart" ? styles.tabScreenActive : styles.tabScreenHidden]}
+        >
+          <CartScreen
+            bottomInset={scrollBottomInset}
+            onOrderPlaced={() => switchTab("orders")}
+            onRequireAuth={() => switchTab("account")}
+          />
+        </View>
+
+        <View
+          pointerEvents={activeTab === "orders" ? "auto" : "none"}
+          style={[styles.tabScreen, activeTab === "orders" ? styles.tabScreenActive : styles.tabScreenHidden]}
+        >
+          <OrdersScreen bottomInset={scrollBottomInset} onRequireAuth={() => switchTab("account")} />
+        </View>
+
+        <View
+          pointerEvents={activeTab === "account" ? "auto" : "none"}
+          style={[styles.tabScreen, activeTab === "account" ? styles.tabScreenActive : styles.tabScreenHidden]}
+        >
+          <AccountScreen />
+        </View>
+      </View>
       <View style={[styles.tabBar, { bottom: tabBarBottom, minHeight: tabBarHeight }]}>
         {TABS.map((tab) => {
           const isActive = tab.key === activeTab;
@@ -200,7 +246,7 @@ function AppShell() {
             <Pressable
               accessibilityRole="button"
               key={tab.key}
-              onPress={() => setActiveTab(tab.key)}
+              onPress={() => switchTab(tab.key)}
               style={[styles.tabButton, isActive ? styles.activeTabButton : null]}
             >
               <Ionicons
@@ -274,7 +320,31 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background
   },
   screen: {
-    flex: 1
+    flex: 1,
+    position: "relative"
+  },
+  tabScreen: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0
+  },
+  tabScreenActive: {
+    opacity: 1,
+    zIndex: 1
+  },
+  tabScreenHidden: {
+    opacity: 0,
+    zIndex: 0
+  },
+  detailOverlay: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 4
   },
   tabBar: {
     ...ELEVATION.floating,
@@ -289,7 +359,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     position: "absolute",
-    right: 14
+    right: 14,
+    elevation: 24,
+    zIndex: 50
   },
   tabButton: {
     alignItems: "center",
