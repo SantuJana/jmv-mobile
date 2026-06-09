@@ -65,7 +65,9 @@ export type Banner = {
 export type ProductVariant = {
   id: string;
   name: string;
+  mrp: string;
   price: string;
+  offerPrice?: string;
   stock: number;
   sku: string;
   unit: string;
@@ -100,6 +102,9 @@ export type CartItem = {
   variant: {
     id: string;
     name: string;
+    mrp: string;
+    price: string;
+    offerPrice?: string;
     sku: string;
     unit: string;
     stock: number;
@@ -164,6 +169,7 @@ export type OrderItem = {
   sku: string;
   unit: string;
   quantity: number;
+  mrp: string;
   unitPrice: string;
   total: string;
   createdAt: string;
@@ -174,6 +180,7 @@ export type Order = {
   orderNumber: string;
   userId: string;
   addressId: string;
+  address: Address;
   status: "PENDING" | "CONFIRMED" | "PACKED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
   paymentMethod: "COD";
   paymentStatus: "PENDING" | "PAID" | "FAILED" | "REFUNDED";

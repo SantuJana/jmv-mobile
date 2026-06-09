@@ -31,10 +31,13 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
+  updateUserSession: (user: AuthUser) => Promise<void>;
   authorizedRequest: AuthorizedRequest;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+let refreshPromise: Promise<StoredAuthSession> | null = null;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<StoredAuthSession | null>(null);
@@ -121,25 +124,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await persistSession(null);
   }, [persistSession, session]);
 
+  const updateUserSession = useCallback(async (user: AuthUser) => {
+    if (!session) return;
+    const nextSession: StoredAuthSession = {
+      ...session,
+      user
+    };
+    await persistSession(nextSession);
+  }, [persistSession, session]);
+
   const refreshSession = useCallback(async () => {
     if (!session?.refreshToken) {
       throw new Error("Session has expired");
     }
 
-    const refreshResponse = await apiClient<RefreshResponse>("/auth/refresh", {
-      method: "POST",
-      body: JSON.stringify({ refreshToken: session.refreshToken })
-    });
+    if (refreshPromise) {
+      return refreshPromise;
+    }
 
-    const nextSession: StoredAuthSession = {
-      ...session,
-      accessToken: refreshResponse.data.tokens.accessToken,
-      refreshToken: refreshResponse.data.tokens.refreshToken
-    };
+    refreshPromise = (async () => {
+      try {
+        const refreshResponse = await apiClient<RefreshResponse>("/auth/refresh", {
+          method: "POST",
+          body: JSON.stringify({ refreshToken: session.refreshToken })
+        });
 
-    await persistSession(nextSession);
+        const nextSession: StoredAuthSession = {
+          ...session,
+          accessToken: refreshResponse.data.tokens.accessToken,
+          refreshToken: refreshResponse.data.tokens.refreshToken
+        };
 
-    return nextSession;
+        await persistSession(nextSession);
+        return nextSession;
+      } finally {
+        refreshPromise = null;
+      }
+    })();
+
+    return refreshPromise;
   }, [persistSession, session]);
 
   const authorizedRequest = useCallback<AuthorizedRequest>(
@@ -183,9 +206,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       logout,
+      updateUserSession,
       authorizedRequest
     }),
-    [authorizedRequest, isReady, login, logout, register, session]
+    [authorizedRequest, isReady, login, logout, register, updateUserSession, session]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

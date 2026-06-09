@@ -4,99 +4,60 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
+  Modal,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
+import type { CompositeScreenProps } from "@react-navigation/native";
+import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
-import { getErrorMessage } from "../lib/api-client";
+import { apiClient, getErrorMessage } from "../lib/api-client";
 import { formatCurrency } from "../lib/format";
 import { useAuth } from "../providers/auth-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
-import type { Address, ApiResponse, Cart, Coupon, Order } from "../types/api";
+import type { ApiResponse, Cart, Address } from "../types/api";
+import type { MainTabParamList, RootStackParamList } from "../navigation/types";
 
-type CartScreenProps = {
-  bottomInset?: number;
-  onOrderPlaced?: () => void;
-  onRequireAuth: () => void;
-};
+import { CartItemCard } from "../components/cart/CartItemCard";
+import { CartSkeleton } from "../components/cart/CartSkeleton";
+import { Button } from "../components/common/Button";
 
-const FREE_DELIVERY_TARGET = 299;
-const DEFAULT_COUNTRY = "India";
-const keyboardAvoidingBehavior = Platform.OS === "ios" ? "padding" : "height";
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<MainTabParamList, "CartTab">,
+  NativeStackScreenProps<RootStackParamList>
+>;
 
-type AddressFormState = {
-  fullName: string;
-  phone: string;
-  line1: string;
-  line2: string;
-  city: string;
-  state: string;
-  postalCode: string;
-};
+export function CartScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = insets.bottom + 80;
 
-const emptyAddressForm: AddressFormState = {
-  fullName: "",
-  phone: "",
-  line1: "",
-  line2: "",
-  city: "",
-  state: "",
-  postalCode: ""
-};
-
-function SkeletonBlock({
-  height,
-  width = "100%",
-  radius = 10,
-  style
-}: {
-  height: number;
-  width?: number | `${number}%`;
-  radius?: number;
-  style?: object;
-}) {
-  return <View style={[styles.skeletonBlock, { borderRadius: radius, height, width }, style]} />;
-}
-
-export function CartScreen({ onRequireAuth, onOrderPlaced, bottomInset = 24 }: CartScreenProps) {
   const { isReady, isAuthenticated, authorizedRequest } = useAuth();
   const [cart, setCart] = useState<Cart | null>(null);
-  const [addresses, setAddresses] = useState<Address[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isAddressLoading, setIsAddressLoading] = useState(false);
-  const [busyItemId, setBusyItemId] = useState<string | null>(null);
-  const [isClearing, setIsClearing] = useState(false);
-  const [isCreatingAddress, setIsCreatingAddress] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
-  const [showAddressForm, setShowAddressForm] = useState(false);
-  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
-  const [addressForm, setAddressForm] = useState<AddressFormState>(emptyAddressForm);
-  const [couponCode, setCouponCode] = useState("");
-  const [appliedCoupon, setAppliedCoupon] = useState<{ coupon: Coupon; discountAmount: string } | null>(null);
-  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [isAddressModalVisible, setIsAddressModalVisible] = useState(false);
 
-  const subtotalValue = useMemo(() => Number(cart?.subtotal ?? 0), [cart?.subtotal]);
-  const discountValue = useMemo(() => Number(appliedCoupon?.discountAmount ?? 0), [appliedCoupon?.discountAmount]);
-  const freeDeliveryRemaining = Math.max(0, FREE_DELIVERY_TARGET - subtotalValue);
-  const deliveryValue = freeDeliveryRemaining > 0 ? 29 : 0;
-  const payableValue = Math.max(0, subtotalValue + deliveryValue - discountValue);
-  const deliveryProgress = Math.max(0, Math.min(1, subtotalValue / FREE_DELIVERY_TARGET));
-  const selectedAddress = useMemo(
-    () => addresses.find((address) => address.id === selectedAddressId) ?? null,
-    [addresses, selectedAddressId]
-  );
+  // Coupon state
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<any | null>(null);
+  const [discountAmount, setDiscountAmount] = useState(0);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [isCheckingCoupon, setIsCheckingCoupon] = useState(false);
+
+  const totalItems = useMemo(() => {
+    return cart?.items.reduce((acc, item) => acc + item.quantity, 0) ?? 0;
+  }, [cart]);
 
   const loadCart = useCallback(async () => {
     setError(null);
@@ -104,256 +65,165 @@ export function CartScreen({ onRequireAuth, onOrderPlaced, bottomInset = 24 }: C
     setCart(response.data.cart);
   }, [authorizedRequest]);
 
-  const loadAddresses = useCallback(async () => {
-    setIsAddressLoading(true);
-    setError(null);
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) {
+      setCouponError("Please enter a coupon code");
+      return;
+    }
+    if (!cart) return;
+
+    setIsCheckingCoupon(true);
+    setCouponError(null);
 
     try {
-      const response = await authorizedRequest<ApiResponse<{ addresses: Address[] }>>("/users/me/addresses");
-      const nextAddresses = response.data.addresses;
-      const defaultAddress = nextAddresses.find((address) => address.isDefault) ?? nextAddresses[0] ?? null;
-
-      setAddresses(nextAddresses);
-      setSelectedAddressId((currentSelectedId) => {
-        if (currentSelectedId && nextAddresses.some((address) => address.id === currentSelectedId)) {
-          return currentSelectedId;
-        }
-
-        return defaultAddress?.id ?? null;
+      const response = await authorizedRequest<ApiResponse<{ coupon: any; discountAmount: string }>>("/coupons/validate", {
+        method: "POST",
+        body: JSON.stringify({
+          code: couponCode.trim().toUpperCase(),
+          subtotal: cart.subtotal
+        })
       });
+
+      setAppliedCoupon(response.data.coupon);
+      setDiscountAmount(parseFloat(response.data.discountAmount));
+      setCouponError(null);
+      Alert.alert("Coupon Applied", `You saved ${formatCurrency(parseFloat(response.data.discountAmount))}!`);
+    } catch (err) {
+      setAppliedCoupon(null);
+      setDiscountAmount(0);
+      setCouponError(getErrorMessage(err, "Invalid coupon code"));
     } finally {
-      setIsAddressLoading(false);
+      setIsCheckingCoupon(false);
     }
-  }, [authorizedRequest]);
+  };
 
-  const loadCheckoutData = useCallback(async () => {
-    await Promise.all([loadCart(), loadAddresses()]);
-  }, [loadAddresses, loadCart]);
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setDiscountAmount(0);
+    setCouponCode("");
+    setCouponError(null);
+  };
 
+  // Re-validate coupon if subtotal changes and coupon is applied
   useEffect(() => {
-    if (!isReady) {
-      return;
+    if (appliedCoupon && cart) {
+      const revalidateCoupon = async () => {
+        try {
+          const response = await authorizedRequest<ApiResponse<{ coupon: any; discountAmount: string }>>("/coupons/validate", {
+            method: "POST",
+            body: JSON.stringify({
+              code: appliedCoupon.code,
+              subtotal: cart.subtotal
+            })
+          });
+          setDiscountAmount(parseFloat(response.data.discountAmount));
+          setCouponError(null);
+        } catch (err) {
+          setAppliedCoupon(null);
+          setDiscountAmount(0);
+          const errorMsg = getErrorMessage(err, "Applied coupon is no longer valid");
+          setCouponError(errorMsg);
+          Alert.alert("Coupon Removed", errorMsg);
+        }
+      };
+      void revalidateCoupon();
     }
+  }, [cart?.subtotal, authorizedRequest]);
 
-    if (!isAuthenticated) {
-      setCart(null);
-      setIsLoading(false);
-      return;
-    }
-
-    const fetchCart = async () => {
-      setIsLoading(true);
-
-      try {
-        await loadCheckoutData();
-      } catch (loadError) {
-        setError(getErrorMessage(loadError, "Unable to load cart"));
-      } finally {
+  useFocusEffect(
+    useCallback(() => {
+      if (!isReady) return;
+      if (!isAuthenticated) {
+        setCart(null);
         setIsLoading(false);
+        return;
       }
-    };
 
-    void fetchCart();
-  }, [isAuthenticated, isReady, loadCheckoutData]);
+      const fetchCartAndAddresses = async () => {
+        setIsLoading(true);
+        try {
+          await loadCart();
+          const addressRes = await authorizedRequest<ApiResponse<{ addresses: Address[] }>>("/users/me/addresses");
+          const loadedAddresses = addressRes.data.addresses;
+          setAddresses(loadedAddresses);
+          
+          if (loadedAddresses.length > 0) {
+            const defaultAddr = loadedAddresses.find((a: Address) => a.isDefault) || loadedAddresses[0];
+            setSelectedAddressId(defaultAddr.id);
+          }
+        } catch (loadError) {
+          setError(getErrorMessage(loadError, "Unable to load data"));
+        } finally {
+          setIsLoading(false);
+        }
+      };
 
-  const handleRefresh = useCallback(async () => {
-    if (!isAuthenticated) {
-      return;
-    }
+      void fetchCartAndAddresses();
+    }, [isAuthenticated, isReady, loadCart])
+  );
 
-    setIsRefreshing(true);
-    setError(null);
-
+  const handleUpdateQuantity = async (cartItemId: string, quantity: number) => {
+    setIsUpdating(cartItemId);
     try {
-      await loadCheckoutData();
-    } catch (refreshError) {
-      setError(getErrorMessage(refreshError, "Unable to refresh cart"));
+      await authorizedRequest<ApiResponse<{ cart: Cart }>>(`/cart/items/${cartItemId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ quantity })
+      });
+      await loadCart();
+    } catch (updateError) {
+      Alert.alert("Error", getErrorMessage(updateError, "Failed to update quantity"));
     } finally {
-      setIsRefreshing(false);
+      setIsUpdating(null);
     }
-  }, [isAuthenticated, loadCheckoutData]);
+  };
 
-  const updateItemQuantity = useCallback(
-    async (itemId: string, quantity: number) => {
-      setBusyItemId(itemId);
-      setError(null);
-
-      try {
-        const response = await authorizedRequest<ApiResponse<{ cart: Cart }>>(`/cart/items/${itemId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ quantity })
-        });
-        setCart(response.data.cart);
-        setAppliedCoupon(null);
-      } catch (updateError) {
-        Alert.alert("Could not update quantity", getErrorMessage(updateError, "Please try again."));
-      } finally {
-        setBusyItemId(null);
-      }
-    },
-    [authorizedRequest]
-  );
-
-  const removeItem = useCallback(
-    async (itemId: string) => {
-      setBusyItemId(itemId);
-      setError(null);
-
-      try {
-        const response = await authorizedRequest<ApiResponse<{ cart: Cart }>>(`/cart/items/${itemId}`, {
-          method: "DELETE"
-        });
-        setCart(response.data.cart);
-        setAppliedCoupon(null);
-      } catch (removeError) {
-        Alert.alert("Could not remove item", getErrorMessage(removeError, "Please try again."));
-      } finally {
-        setBusyItemId(null);
-      }
-    },
-    [authorizedRequest]
-  );
-
-  const clearCart = useCallback(async () => {
-    setIsClearing(true);
-    setError(null);
-
+  const handleRemoveItem = async (cartItemId: string) => {
+    setIsUpdating(cartItemId);
     try {
-      const response = await authorizedRequest<ApiResponse<{ cart: Cart }>>("/cart", {
+      await authorizedRequest<ApiResponse<{ cart: Cart }>>(`/cart/items/${cartItemId}`, {
         method: "DELETE"
       });
-      setCart(response.data.cart);
-      setAppliedCoupon(null);
-      setCouponCode("");
-    } catch (clearError) {
-      Alert.alert("Could not clear cart", getErrorMessage(clearError, "Please try again."));
+      await loadCart();
+    } catch (removeError) {
+      Alert.alert("Error", getErrorMessage(removeError, "Failed to remove item"));
     } finally {
-      setIsClearing(false);
+      setIsUpdating(null);
     }
-  }, [authorizedRequest]);
+  };
 
-  const applyCoupon = useCallback(async () => {
-    const normalizedCode = couponCode.trim().toUpperCase();
-
-    if (!normalizedCode) {
-      Alert.alert("Coupon required", "Enter a coupon code first.");
-      return;
-    }
-
-    setIsApplyingCoupon(true);
-    setError(null);
-
-    try {
-      const response = await authorizedRequest<ApiResponse<{ coupon: Coupon; discountAmount: string }>>("/coupons/validate", {
-        method: "POST",
-        body: JSON.stringify({
-          code: normalizedCode,
-          subtotal: (cart?.subtotal ?? "0").toString()
-        })
-      });
-
-      setCouponCode(response.data.coupon.code);
-      setAppliedCoupon(response.data);
-    } catch (couponError) {
-      setAppliedCoupon(null);
-      Alert.alert("Coupon not applied", getErrorMessage(couponError, "Please try another coupon."));
-    } finally {
-      setIsApplyingCoupon(false);
-    }
-  }, [authorizedRequest, cart?.subtotal, couponCode]);
-
-  const createAddress = useCallback(async () => {
-    const payload = {
-      fullName: addressForm.fullName.trim(),
-      phone: addressForm.phone.trim(),
-      line1: addressForm.line1.trim(),
-      line2: addressForm.line2.trim() || undefined,
-      city: addressForm.city.trim(),
-      state: addressForm.state.trim(),
-      postalCode: addressForm.postalCode.trim(),
-      country: DEFAULT_COUNTRY
-    };
-
-    if (!payload.fullName || !payload.phone || !payload.line1 || !payload.city || !payload.state || !payload.postalCode) {
-      Alert.alert("Incomplete address", "Please fill full name, phone, address line, city, state, and postal code.");
-      return;
-    }
-
-    setIsCreatingAddress(true);
-    setError(null);
-
-    try {
-      const response = await authorizedRequest<ApiResponse<{ address: Address }>>("/users/me/addresses", {
-        method: "POST",
-        body: JSON.stringify({
-          ...payload,
-          type: "HOME",
-          isDefault: addresses.length === 0
-        })
-      });
-
-      const nextAddress = response.data.address;
-
-      setAddresses((current) => {
-        if (nextAddress.isDefault) {
-          return [nextAddress, ...current.map((address) => ({ ...address, isDefault: false }))];
-        }
-
-        return [nextAddress, ...current];
-      });
-      setSelectedAddressId(nextAddress.id);
-      setShowAddressForm(false);
-      setAddressForm(emptyAddressForm);
-      Alert.alert("Address saved", "Delivery address has been added.");
-    } catch (createError) {
-      Alert.alert("Could not save address", getErrorMessage(createError, "Please try again."));
-    } finally {
-      setIsCreatingAddress(false);
-    }
-  }, [addressForm, addresses.length, authorizedRequest]);
-
-  const placeOrder = useCallback(async () => {
-    const cartItemsCount = cart?.items.length ?? 0;
-
-    if (cartItemsCount === 0) {
-      Alert.alert("Cart is empty", "Add items to your cart before placing an order.");
-      return;
-    }
-
+  const handlePlaceOrder = async () => {
     if (!selectedAddressId) {
-      Alert.alert("Address required", "Please select or add a delivery address.");
+      Alert.alert("No Address", "Please select or add a delivery address.");
       return;
     }
-
+    
     setIsPlacingOrder(true);
-    setError(null);
-
     try {
-      const response = await authorizedRequest<ApiResponse<{ order: Order }>>("/orders", {
+      await authorizedRequest<ApiResponse<{ order: unknown }>>("/orders", {
         method: "POST",
         body: JSON.stringify({
           addressId: selectedAddressId,
           paymentMethod: "COD",
-          couponCode: appliedCoupon?.coupon.code
+          couponCode: appliedCoupon ? appliedCoupon.code : undefined
         })
       });
-
-      await loadCart();
+      Alert.alert("Success", "Your order has been placed!");
       setAppliedCoupon(null);
+      setDiscountAmount(0);
       setCouponCode("");
-      Alert.alert("Order placed", `Order ${response.data.order.orderNumber} created successfully.`);
-      onOrderPlaced?.();
-    } catch (placeError) {
-      Alert.alert("Could not place order", getErrorMessage(placeError, "Please try again."));
+      setCart(null);
+      navigation.navigate("OrdersTab");
+    } catch (orderError) {
+      Alert.alert("Checkout Failed", getErrorMessage(orderError, "Failed to place order"));
     } finally {
       setIsPlacingOrder(false);
     }
-  }, [appliedCoupon?.coupon.code, authorizedRequest, cart?.items.length, loadCart, onOrderPlaced, selectedAddressId]);
+  };
 
   if (!isReady) {
     return (
       <View style={styles.centeredContainer}>
-        <ActivityIndicator color={COLORS.primary} />
+        <ActivityIndicator color={COLORS.primary} size="large" />
       </View>
     );
   }
@@ -361,388 +231,271 @@ export function CartScreen({ onRequireAuth, onOrderPlaced, bottomInset = 24 }: C
   if (!isAuthenticated) {
     return (
       <View style={styles.centeredContainer}>
-        <Ionicons color={COLORS.primary} name="bag-handle-outline" size={32} />
-        <Text style={styles.emptyTitle}>Sign in to view your basket</Text>
-        <Text style={styles.emptySubtitle}>Your saved items and offers will appear here.</Text>
-        <Pressable onPress={onRequireAuth} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-          <Text style={styles.primaryButtonText}>Go to Account</Text>
-        </Pressable>
+        <Ionicons color={COLORS.primaryDeep} name="cart-outline" size={64} />
+        <Text style={styles.emptyTitle}>Sign in to view your cart</Text>
+        <Text style={styles.emptySubtitle}>You must be logged in to add items and checkout.</Text>
+        <Button
+          label="Go to Account"
+          onPress={() => navigation.navigate("AccountTab")}
+          style={{ marginTop: 24, width: "60%" }}
+        />
       </View>
     );
   }
 
-  if (isLoading) {
+  if (isLoading && !cart) {
     return (
-      <SafeAreaView edges={["left", "right"]} style={styles.safeArea}>
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottomInset }]} showsVerticalScrollIndicator={false}>
-          <View style={styles.summarySkeleton}>
-            <SkeletonBlock height={24} width="44%" />
-            <SkeletonBlock height={12} width="56%" style={styles.skeletonGapTop} />
-            <SkeletonBlock height={54} radius={12} style={styles.skeletonLargeGapTop} />
-          </View>
-
-          {[0, 1, 2].map((item) => (
-            <View key={item} style={styles.itemCard}>
-              <SkeletonBlock height={104} width={96} radius={0} />
-              <View style={styles.itemBody}>
-                <SkeletonBlock height={14} width="72%" />
-                <SkeletonBlock height={12} width="42%" style={styles.skeletonGapTop} />
-                <SkeletonBlock height={16} width="50%" style={styles.skeletonLargeGapTop} />
-                <SkeletonBlock height={28} width="88%" radius={999} style={styles.skeletonLargeGapTop} />
-              </View>
-            </View>
-          ))}
-
-          <View style={styles.addressCard}>
-            <SkeletonBlock height={18} width="48%" />
-            <SkeletonBlock height={64} radius={10} style={styles.skeletonLargeGapTop} />
-          </View>
-
-          <View style={styles.checkoutCard}>
-            <SkeletonBlock height={14} width="100%" />
-            <SkeletonBlock height={14} width="84%" style={styles.skeletonGapTop} />
-            <SkeletonBlock height={44} radius={10} style={styles.skeletonLargeGapTop} />
-          </View>
-        </ScrollView>
+      <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
+        <CartSkeleton bottomInset={bottomInset} />
       </SafeAreaView>
     );
   }
 
-  const items = cart?.items ?? [];
+  if (!cart || cart.items.length === 0) {
+    return (
+      <View style={styles.centeredContainer}>
+        <Ionicons color={COLORS.textMuted} name="cart-outline" size={64} />
+        <Text style={styles.emptyTitle}>Your cart is empty</Text>
+        <Text style={styles.emptySubtitle}>Explore our shop to add some items.</Text>
+        <Button
+          label="Go to Shop"
+          onPress={() => navigation.navigate("ShopTab")}
+          style={{ marginTop: 24, width: "60%" }}
+        />
+      </View>
+    );
+  }
+
+  const FREE_DELIVERY_THRESHOLD = 500;
+  const deliveryFee = parseFloat(cart.subtotal) >= FREE_DELIVERY_THRESHOLD ? 0 : 40;
+  const finalTotal = Math.max(0, parseFloat(cart.subtotal) + deliveryFee - discountAmount);
+  const progressToFreeDelivery = Math.min(100, (parseFloat(cart.subtotal) / FREE_DELIVERY_THRESHOLD) * 100);
+
+  const totalMrp = cart.items.reduce((sum, item) => sum + parseFloat(item.variant.mrp || item.unitPrice) * item.quantity, 0);
+  const totalSavings = (totalMrp - parseFloat(cart.subtotal)) + discountAmount;
 
   return (
-    <SafeAreaView edges={["left", "right"]} style={styles.safeArea}>
-      <KeyboardAvoidingView behavior={keyboardAvoidingBehavior} style={styles.keyboardAvoidingRoot}>
-        <ScrollView
-          automaticallyAdjustKeyboardInsets
-          contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 120 }]}
-          keyboardDismissMode="interactive"
-          keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={COLORS.primary} />}
-          showsVerticalScrollIndicator={false}
-        >
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 100 }]}
+        showsVerticalScrollIndicator={false}
+      >
         <LinearGradient
-          colors={["#FFD89A", "#FFC47F", "#FFB060"]}
+          colors={["#A7F3D0", "#34D399"]}
           end={{ x: 1, y: 1 }}
           start={{ x: 0, y: 0 }}
-          style={styles.summaryHero}
+          style={styles.hero}
         >
-          <View style={styles.summaryTopRow}>
-            <View>
-              <Text style={styles.summaryHeroTitle}>My Basket</Text>
-              <Text style={styles.summaryHeroSubTitle}>{cart?.totalItems ?? 0} items ready for checkout</Text>
-            </View>
-            <View style={styles.summaryHeroPill}>
-              <Ionicons color={COLORS.surface} name="timer-outline" size={13} />
-              <Text style={styles.summaryHeroPillText}>10-20 min</Text>
-            </View>
-          </View>
+          <Text style={styles.heroTitle}>Basket Summary</Text>
+          <Text style={styles.heroSubTitle}>
+            {totalItems} {totalItems === 1 ? "item" : "items"}
+          </Text>
 
-          <View style={styles.deliveryProgressWrap}>
-            <View style={styles.deliveryProgressTrack}>
-              <View style={[styles.deliveryProgressFill, { width: `${deliveryProgress * 100}%` }]} />
+          <View style={styles.deliveryWidget}>
+            <View style={styles.deliveryHeaderRow}>
+              <Ionicons color={COLORS.primaryDeep} name="bicycle" size={18} />
+              <Text style={styles.deliveryWidgetText}>
+                {deliveryFee === 0
+                  ? "You got Free Delivery!"
+                  : `Add ${formatCurrency(FREE_DELIVERY_THRESHOLD - parseFloat(cart.subtotal))} more for Free Delivery`}
+              </Text>
             </View>
-            <Text style={styles.deliveryProgressText}>
-              {freeDeliveryRemaining > 0
-                ? `Add ${formatCurrency(freeDeliveryRemaining)} for free delivery`
-                : "You unlocked free delivery"}
-            </Text>
+            <View style={styles.progressBarBg}>
+              <View style={[styles.progressBarFill, { width: `${progressToFreeDelivery}%` }]} />
+            </View>
           </View>
         </LinearGradient>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {items.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>Your cart is empty</Text>
-            <Text style={styles.emptySubtitle}>Add products from the Shop tab to continue.</Text>
+        <Text style={styles.sectionTitle}>Review Items</Text>
+        <View style={styles.itemsList}>
+          {cart.items.map((item) => (
+            <CartItemCard
+              item={item}
+              isBusy={isUpdating === item.id}
+              key={item.id}
+              onRemove={(id) => void handleRemoveItem(id)}
+              onUpdateQuantity={(id, quantity) => void handleUpdateQuantity(id, quantity)}
+            />
+          ))}
+        </View>
+
+        {/* Coupon Card */}
+        <View style={styles.billCard}>
+          <View style={styles.couponHeader}>
+            <Ionicons name="pricetag-outline" size={18} color={COLORS.primaryDeep} />
+            <Text style={styles.couponCardTitle}>Coupons & Offers</Text>
           </View>
-        ) : (
-          <>
-            {items.map((item) => {
-              const imageUri = item.product.imageUrls?.thumbnail ?? item.product.imageUrl;
-              const isBusy = busyItemId === item.id;
-              const canDecrease = item.quantity > 1;
 
-              return (
-                <View key={item.id} style={styles.itemCard}>
-                  {imageUri ? (
-                    <Image source={{ uri: imageUri }} style={styles.itemImage} />
-                  ) : (
-                    <View style={styles.itemImagePlaceholder}>
-                      <Ionicons color={COLORS.textMuted} name="image-outline" size={18} />
-                    </View>
-                  )}
-
-                  <View style={styles.itemBody}>
-                    <Text numberOfLines={1} style={styles.itemName}>
-                      {item.product.name}
-                    </Text>
-                    <Text style={styles.itemMeta}>{item.variant.name}</Text>
-                    <Text style={styles.itemMeta}>{formatCurrency(item.unitPrice)} each</Text>
-                    <Text style={styles.itemTotal}>{formatCurrency(item.lineTotal)}</Text>
-
-                    <View style={styles.itemActions}>
-                      <View style={styles.stepper}>
-                        <Pressable
-                          disabled={!canDecrease || isBusy}
-                          onPress={() => void updateItemQuantity(item.id, item.quantity - 1)}
-                          style={[styles.stepperButton, !canDecrease ? styles.stepperButtonDisabled : null]}
-                        >
-                          <Ionicons color={COLORS.surface} name="remove" size={14} />
-                        </Pressable>
-                        <Text style={styles.quantityText}>{item.quantity}</Text>
-                        <Pressable
-                          disabled={isBusy}
-                          onPress={() => void updateItemQuantity(item.id, item.quantity + 1)}
-                          style={styles.stepperButton}
-                        >
-                          <Ionicons color={COLORS.surface} name="add" size={14} />
-                        </Pressable>
-                      </View>
-
-                      <Pressable disabled={isBusy} onPress={() => void removeItem(item.id)} style={styles.removeButton}>
-                        {isBusy ? (
-                          <ActivityIndicator color={COLORS.danger} size="small" />
-                        ) : (
-                          <Text style={styles.removeButtonText}>Remove</Text>
-                        )}
-                      </Pressable>
-                    </View>
-                  </View>
-                </View>
-              );
-            })}
-
-            <View style={styles.addressCard}>
-              <View style={styles.addressHeader}>
-                <Text style={styles.addressTitle}>Delivery Address</Text>
-                <Pressable
-                  disabled={isCreatingAddress}
-                  onPress={() => setShowAddressForm((current) => !current)}
-                  style={styles.addressToggleButton}
-                >
-                  <Text style={styles.addressToggleButtonText}>{showAddressForm ? "Close" : "Add New"}</Text>
-                </Pressable>
-              </View>
-
-              {isAddressLoading ? (
-                <View style={styles.addressLoadingWrap}>
-                  <ActivityIndicator color={COLORS.primary} size="small" />
-                  <Text style={styles.addressLoadingText}>Loading addresses...</Text>
-                </View>
-              ) : addresses.length === 0 ? (
-                <Text style={styles.addressEmptyText}>No saved address. Add one to place your order.</Text>
-              ) : (
-                <View style={styles.addressList}>
-                  {addresses.map((address) => {
-                    const isSelected = selectedAddressId === address.id;
-
-                    return (
-                      <Pressable
-                        key={address.id}
-                        onPress={() => setSelectedAddressId(address.id)}
-                        style={[styles.addressOption, isSelected ? styles.addressOptionSelected : null]}
-                      >
-                        <View style={styles.addressOptionTopRow}>
-                          <Text style={styles.addressOptionName}>
-                            {address.fullName} · {address.phone}
-                          </Text>
-                          <Text style={[styles.addressOptionType, address.isDefault ? styles.addressDefaultType : null]}>
-                            {address.isDefault ? "Default" : address.type}
-                          </Text>
-                        </View>
-                        <Text style={styles.addressOptionLine}>
-                          {address.line1}
-                          {address.line2 ? `, ${address.line2}` : ""}
-                        </Text>
-                        <Text style={styles.addressOptionLine}>
-                          {address.city}, {address.state} {address.postalCode}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              )}
-
-              {showAddressForm ? (
-                <View style={styles.addressForm}>
-                  <TextInput
-                    onChangeText={(value) => setAddressForm((current) => ({ ...current, fullName: value }))}
-                    placeholder="Full Name"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={styles.addressInput}
-                    value={addressForm.fullName}
-                  />
-                  <TextInput
-                    keyboardType="phone-pad"
-                    onChangeText={(value) => setAddressForm((current) => ({ ...current, phone: value }))}
-                    placeholder="Phone"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={styles.addressInput}
-                    value={addressForm.phone}
-                  />
-                  <TextInput
-                    onChangeText={(value) => setAddressForm((current) => ({ ...current, line1: value }))}
-                    placeholder="Address Line 1"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={styles.addressInput}
-                    value={addressForm.line1}
-                  />
-                  <TextInput
-                    onChangeText={(value) => setAddressForm((current) => ({ ...current, line2: value }))}
-                    placeholder="Address Line 2 (optional)"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={styles.addressInput}
-                    value={addressForm.line2}
-                  />
-                  <View style={styles.addressFormRow}>
-                    <TextInput
-                      onChangeText={(value) => setAddressForm((current) => ({ ...current, city: value }))}
-                      placeholder="City"
-                      placeholderTextColor={COLORS.textMuted}
-                      style={[styles.addressInput, styles.addressInputHalf]}
-                      value={addressForm.city}
-                    />
-                    <TextInput
-                      onChangeText={(value) => setAddressForm((current) => ({ ...current, state: value }))}
-                      placeholder="State"
-                      placeholderTextColor={COLORS.textMuted}
-                      style={[styles.addressInput, styles.addressInputHalf]}
-                      value={addressForm.state}
-                    />
-                  </View>
-                  <TextInput
-                    keyboardType="number-pad"
-                    onChangeText={(value) => setAddressForm((current) => ({ ...current, postalCode: value }))}
-                    placeholder="Postal Code"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={styles.addressInput}
-                    value={addressForm.postalCode}
-                  />
-
-                  <Pressable
-                    disabled={isCreatingAddress}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      void createAddress();
-                    }}
-                    style={({ pressed }) => [styles.saveAddressButton, pressed && styles.pressed]}
-                  >
-                    {isCreatingAddress ? (
-                      <ActivityIndicator color={COLORS.surface} size="small" />
-                    ) : (
-                      <Text style={styles.saveAddressButtonText}>Save Address</Text>
-                    )}
-                  </Pressable>
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.checkoutCard}>
-              <View style={styles.couponBox}>
-                <Text style={styles.couponTitle}>Coupon</Text>
-                <View style={styles.couponRow}>
-                  <TextInput
-                    autoCapitalize="characters"
-                    onChangeText={(value) => {
-                      setCouponCode(value.toUpperCase());
-                      setAppliedCoupon(null);
-                    }}
-                    placeholder="Enter code"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={styles.couponInput}
-                    value={couponCode}
-                  />
-                  <Pressable
-                    disabled={isApplyingCoupon}
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      void applyCoupon();
-                    }}
-                    style={({ pressed }) => [styles.applyCouponButton, pressed && styles.pressed]}
-                  >
-                    {isApplyingCoupon ? (
-                      <ActivityIndicator color={COLORS.surface} size="small" />
-                    ) : (
-                      <Text style={styles.applyCouponButtonText}>Apply</Text>
-                    )}
-                  </Pressable>
-                </View>
-                {appliedCoupon ? (
-                  <View style={styles.appliedCouponRow}>
-                    <Text style={styles.appliedCouponText}>
-                      {appliedCoupon.coupon.code} applied · saved {formatCurrency(appliedCoupon.discountAmount)}
-                    </Text>
-                    <Pressable
-                      onPress={() => {
-                        setAppliedCoupon(null);
-                        setCouponCode("");
-                      }}
-                    >
-                      <Text style={styles.removeCouponText}>Remove</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-              </View>
-
-              <View style={styles.checkoutRow}>
-                <Text style={styles.checkoutLabel}>Items</Text>
-                <Text style={styles.checkoutValue}>{cart?.totalItems ?? 0}</Text>
-              </View>
-              <View style={styles.checkoutRow}>
-                <Text style={styles.checkoutLabel}>Subtotal</Text>
-                <Text style={styles.checkoutValue}>{formatCurrency(cart?.subtotal ?? "0")}</Text>
-              </View>
-              <View style={styles.checkoutRow}>
-                <Text style={styles.checkoutLabel}>Delivery</Text>
-                <Text style={styles.checkoutValue}>{deliveryValue > 0 ? formatCurrency(deliveryValue) : "FREE"}</Text>
-              </View>
-              {discountValue > 0 ? (
-                <View style={styles.checkoutRow}>
-                  <Text style={styles.discountLabel}>Coupon</Text>
-                  <Text style={styles.discountValue}>-{formatCurrency(discountValue)}</Text>
-                </View>
-              ) : null}
-
-              <View style={styles.checkoutRow}>
-                <Text style={styles.checkoutLabel}>Pay Mode</Text>
-                <Text style={styles.checkoutValue}>Cash On Delivery</Text>
-              </View>
-
-              <View style={styles.checkoutTotalRow}>
-                <Text style={styles.checkoutTotalLabel}>Payable</Text>
-                <Text style={styles.checkoutTotalValue}>{formatCurrency(payableValue)}</Text>
-              </View>
-
+          <View style={styles.couponInputContainer}>
+            <TextInput
+              style={[
+                styles.couponInput,
+                appliedCoupon && styles.couponInputDisabled,
+                couponError && styles.couponInputError
+              ]}
+              placeholder="Enter Coupon Code"
+              placeholderTextColor={COLORS.textMuted}
+              value={couponCode}
+              onChangeText={(text) => {
+                setCouponCode(text);
+                setCouponError(null);
+              }}
+              autoCapitalize="characters"
+              editable={!appliedCoupon && !isCheckingCoupon}
+            />
+            {appliedCoupon ? (
               <Pressable
-                disabled={isPlacingOrder || !selectedAddress}
-                onPress={() => void placeOrder()}
-                style={({ pressed }) => [
-                  styles.placeOrderButton,
-                  (!selectedAddress || isPlacingOrder) ? styles.placeOrderButtonDisabled : null,
-                  pressed && styles.pressed
-                ]}
+                style={[styles.couponButton, styles.couponButtonRemove]}
+                onPress={handleRemoveCoupon}
               >
-                {isPlacingOrder ? (
+                <Text style={styles.couponButtonTextRemove}>Remove</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={styles.couponButton}
+                onPress={() => void handleApplyCoupon()}
+                disabled={isCheckingCoupon || !couponCode.trim()}
+              >
+                {isCheckingCoupon ? (
                   <ActivityIndicator color={COLORS.surface} size="small" />
                 ) : (
-                  <Text style={styles.placeOrderButtonText}>Place Order</Text>
+                  <Text style={styles.couponButtonText}>Apply</Text>
                 )}
               </Pressable>
+            )}
+          </View>
 
-              <Pressable
-                disabled={isClearing}
-                onPress={() => void clearCart()}
-                style={({ pressed }) => [styles.clearButton, pressed && styles.pressed]}
-              >
-                {isClearing ? <ActivityIndicator color={COLORS.surface} size="small" /> : <Text style={styles.clearButtonText}>Clear Cart</Text>}
+          {couponError ? (
+            <Text style={styles.couponErrorText}>{couponError}</Text>
+          ) : null}
+
+          {appliedCoupon ? (
+            <View style={styles.couponSuccessBadge}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={styles.couponSuccessText}>
+                "{appliedCoupon.code}" applied! You saved {formatCurrency(discountAmount)}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.billCard}>
+          <View style={styles.addressCardHeader}>
+            <Text style={styles.billTitle}>Delivery Address</Text>
+            {addresses.length > 0 && (
+              <Pressable onPress={() => setIsAddressModalVisible(true)}>
+                <Text style={styles.changeAddressText}>Change</Text>
+              </Pressable>
+            )}
+          </View>
+          
+          {selectedAddressId ? (() => {
+            const addr = addresses.find((a: Address) => a.id === selectedAddressId);
+            if (!addr) return null;
+            return (
+              <View style={styles.addressDetailsWrap}>
+                <Text style={styles.addressName}>{addr.fullName} <Text style={styles.addressType}>({addr.type})</Text></Text>
+                <Text style={styles.addressLine}>{addr.line1}</Text>
+                {addr.line2 ? <Text style={styles.addressLine}>{addr.line2}</Text> : null}
+                <Text style={styles.addressLine}>{addr.city}, {addr.state} {addr.postalCode}</Text>
+              </View>
+            );
+          })() : (
+            <Button 
+              label="Add Delivery Address" 
+              onPress={() => navigation.navigate("AddAddress")}
+            />
+          )}
+        </View>
+
+        <View style={styles.billCard}>
+          <Text style={styles.billTitle}>Bill Details</Text>
+          <View style={styles.billRow}>
+            <Text style={styles.billLabel}>Item Total</Text>
+            <Text style={styles.billValue}>{formatCurrency(parseFloat(cart.subtotal))}</Text>
+          </View>
+          {discountAmount > 0 && (
+            <View style={styles.billRow}>
+              <Text style={styles.billLabelCoupon}>Coupon Discount</Text>
+              <Text style={styles.billValueCoupon}>-{formatCurrency(discountAmount)}</Text>
+            </View>
+          )}
+          <View style={styles.billRow}>
+            <Text style={styles.billLabel}>Delivery Fee</Text>
+            <Text style={styles.billValue}>
+              {deliveryFee === 0 ? <Text style={styles.freeText}>FREE</Text> : formatCurrency(deliveryFee)}
+            </Text>
+          </View>
+          <View style={[styles.billRow, styles.billRowTotal]}>
+            <Text style={styles.billLabelTotal}>To Pay</Text>
+            <Text style={styles.billValueTotal}>{formatCurrency(finalTotal)}</Text>
+          </View>
+          {totalSavings > 0 && (
+            <View style={styles.savingsBox}>
+              <Text style={styles.savingsText}>You saved {formatCurrency(totalSavings)} on this order!</Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      <Modal visible={isAddressModalVisible} animationType="slide" transparent>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Delivery Address</Text>
+              <Pressable onPress={() => setIsAddressModalVisible(false)} style={styles.closeModalBtn}>
+                <Ionicons name="close" size={24} color={COLORS.textPrimary} />
               </Pressable>
             </View>
-          </>
-        )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {addresses.map((addr: Address) => (
+                <Pressable
+                  key={addr.id}
+                  style={[styles.addressOption, selectedAddressId === addr.id && styles.addressOptionSelected]}
+                  onPress={() => {
+                    setSelectedAddressId(addr.id);
+                    setIsAddressModalVisible(false);
+                  }}
+                >
+                  <View style={styles.addressOptionTextWrap}>
+                    <Text style={styles.addressName}>{addr.fullName} <Text style={styles.addressType}>({addr.type})</Text></Text>
+                    <Text style={styles.addressLine}>{addr.line1}</Text>
+                    <Text style={styles.addressLine}>{addr.city}, {addr.state} {addr.postalCode}</Text>
+                  </View>
+                  {selectedAddressId === addr.id && (
+                    <Ionicons name="checkmark-circle" size={24} color={COLORS.primary} />
+                  )}
+                </Pressable>
+              ))}
+              <Button 
+                label="Add New Address" 
+                style={{ marginTop: 16, marginBottom: 24 }}
+                onPress={() => {
+                  setIsAddressModalVisible(false);
+                  navigation.navigate("AddAddress");
+                }}
+              />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <View style={[styles.checkoutBar, { bottom: Math.max(insets.bottom, 16) + 64 + 12 }]}>
+        <View style={styles.checkoutBarContent}>
+          <View style={styles.checkoutPriceWrap}>
+            <Text style={styles.checkoutPriceLabel}>Grand Total</Text>
+            <Text style={styles.checkoutPriceValue}>{formatCurrency(finalTotal)}</Text>
+          </View>
+          <Button
+            isLoading={isPlacingOrder}
+            label="Place Order"
+            onPress={() => void handlePlaceOrder()}
+            style={{ width: "50%" }}
+          />
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -752,9 +505,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     flex: 1
   },
-  keyboardAvoidingRoot: {
-    flex: 1
-  },
   centeredContainer: {
     alignItems: "center",
     backgroundColor: COLORS.background,
@@ -762,518 +512,376 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 20
   },
-  helperText: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 14,
-    marginTop: 8
-  },
-  skeletonBlock: {
-    backgroundColor: "#F1E4D4"
-  },
-  skeletonGapTop: {
-    marginTop: 8
-  },
-  skeletonLargeGapTop: {
-    marginTop: 12
-  },
-  summarySkeleton: {
-    ...ELEVATION.card,
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    borderWidth: 1,
-    marginBottom: 12,
-    padding: 14
-  },
   content: {
-    paddingHorizontal: 14,
-    paddingTop: 10
+    paddingHorizontal: 16,
+    paddingTop: 16
   },
-  summaryHero: {
+  hero: {
     ...ELEVATION.card,
-    borderRadius: 20,
-    marginBottom: 12,
-    padding: 14
+    borderRadius: 24,
+    marginBottom: 24,
+    padding: 20
   },
-  summaryTopRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 12
-  },
-  summaryHeroTitle: {
+  heroTitle: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
     fontSize: 22,
-    fontWeight: "700"
+    fontWeight: "800"
   },
-  summaryHeroSubTitle: {
-    color: COLORS.textSecondary,
+  heroSubTitle: {
+    color: COLORS.textPrimary,
     fontFamily: FONTS.body,
-    fontSize: 12,
-    marginTop: 2
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 4,
+    opacity: 0.8
   },
-  summaryHeroPill: {
+  deliveryWidget: {
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    borderRadius: 16,
+    marginTop: 16,
+    padding: 12
+  },
+  deliveryHeaderRow: {
     alignItems: "center",
+    flexDirection: "row",
+    marginBottom: 8
+  },
+  deliveryWidgetText: {
+    color: COLORS.textPrimary,
+    fontFamily: FONTS.heading,
+    fontSize: 12,
+    fontWeight: "700",
+    marginLeft: 6
+  },
+  progressBarBg: {
+    backgroundColor: "rgba(255, 255, 255, 0.5)",
+    borderRadius: 999,
+    height: 6,
+    overflow: "hidden",
+    width: "100%"
+  },
+  progressBarFill: {
     backgroundColor: COLORS.primaryDeep,
     borderRadius: 999,
-    flexDirection: "row",
-    paddingHorizontal: 10,
-    paddingVertical: 5
-  },
-  summaryHeroPillText: {
-    color: COLORS.surface,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "700",
-    marginLeft: 4
-  },
-  deliveryProgressWrap: {
-    backgroundColor: "rgba(255,255,255,0.72)",
-    borderRadius: 12,
-    padding: 10
-  },
-  deliveryProgressTrack: {
-    backgroundColor: "rgba(31,35,48,0.16)",
-    borderRadius: 999,
-    height: 8,
-    marginBottom: 7,
-    overflow: "hidden"
-  },
-  deliveryProgressFill: {
-    backgroundColor: COLORS.success,
-    borderRadius: 999,
-    height: 8
-  },
-  deliveryProgressText: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "700"
+    height: "100%"
   },
   errorText: {
     color: COLORS.danger,
     fontFamily: FONTS.body,
     fontSize: 13,
-    marginBottom: 8
+    marginBottom: 12
   },
-  emptyState: {
-    ...ELEVATION.card,
-    alignItems: "center",
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 18
-  },
-  emptyTitle: {
+  sectionTitle: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
-    fontSize: 17,
-    fontWeight: "700",
-    marginTop: 6
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 16
   },
-  emptySubtitle: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 13,
-    marginTop: 4,
-    textAlign: "center"
+  itemsList: {
+    gap: 16,
+    marginBottom: 24
   },
-  itemCard: {
+  billCard: {
     ...ELEVATION.card,
     backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    flexDirection: "row",
-    marginBottom: 10,
-    overflow: "hidden"
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 24
   },
-  itemImage: {
-    height: 104,
-    width: 96
-  },
-  itemImagePlaceholder: {
-    alignItems: "center",
-    backgroundColor: "#F2E7D8",
-    height: 104,
-    justifyContent: "center",
-    width: 96
-  },
-  itemBody: {
-    flex: 1,
-    padding: 10
-  },
-  itemName: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
-    fontSize: 14,
-    fontWeight: "700"
-  },
-  itemMeta: {
-    color: COLORS.textMuted,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    marginTop: 1
-  },
-  itemTotal: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
-    fontSize: 15,
-    fontWeight: "700",
-    marginTop: 5
-  },
-  itemActions: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8
-  },
-  stepper: {
-    alignItems: "center",
-    backgroundColor: COLORS.surfaceMuted,
-    borderRadius: 999,
-    flexDirection: "row",
-    paddingHorizontal: 6,
-    paddingVertical: 4
-  },
-  stepperButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.primary,
-    borderRadius: 999,
-    height: 23,
-    justifyContent: "center",
-    width: 23
-  },
-  stepperButtonDisabled: {
-    backgroundColor: "#BFB8AF"
-  },
-  quantityText: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.body,
-    fontSize: 13,
-    fontWeight: "700",
-    marginHorizontal: 9,
-    minWidth: 12,
-    textAlign: "center"
-  },
-  removeButton: {
-    borderColor: "#F4B8BC",
-    borderRadius: 8,
-    borderWidth: 1,
-    minWidth: 66,
-    paddingHorizontal: 10,
-    paddingVertical: 6
-  },
-  removeButtonText: {
-    color: COLORS.danger,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "center"
-  },
-  addressCard: {
-    ...ELEVATION.card,
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginTop: 2,
-    padding: 12
-  },
-  addressHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8
-  },
-  addressTitle: {
+  billTitle: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
     fontSize: 16,
-    fontWeight: "700"
+    fontWeight: "700",
+    marginBottom: 16
   },
-  addressToggleButton: {
-    backgroundColor: COLORS.surfaceMuted,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5
-  },
-  addressToggleButtonText: {
-    color: COLORS.primaryDeep,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "700"
-  },
-  addressLoadingWrap: {
+  billRow: {
     alignItems: "center",
     flexDirection: "row",
-    marginBottom: 6
+    justifyContent: "space-between",
+    marginBottom: 12
   },
-  addressLoadingText: {
+  billLabel: {
     color: COLORS.textSecondary,
     fontFamily: FONTS.body,
-    fontSize: 12,
-    marginLeft: 6
+    fontSize: 14
   },
-  addressEmptyText: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    marginBottom: 4
+  billValue: {
+    color: COLORS.textPrimary,
+    fontFamily: FONTS.heading,
+    fontSize: 14,
+    fontWeight: "600"
   },
-  addressList: {
-    gap: 8
+  freeText: {
+    color: COLORS.success,
+    fontWeight: "800"
   },
-  addressOption: {
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.border,
-    borderRadius: 10,
+  billRowTotal: {
+    borderTopColor: COLORS.border,
+    borderTopWidth: 1,
+    marginBottom: 0,
+    marginTop: 4,
+    paddingTop: 16
+  },
+  billLabelTotal: {
+    color: COLORS.textPrimary,
+    fontFamily: FONTS.heading,
+    fontSize: 16,
+    fontWeight: "800"
+  },
+  billValueTotal: {
+    color: COLORS.primaryDeep,
+    fontFamily: FONTS.heading,
+    fontSize: 18,
+    fontWeight: "800"
+  },
+  checkoutBar: {
+    ...ELEVATION.sheet,
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
     borderWidth: 1,
-    padding: 9
+    borderColor: "rgba(255, 255, 255, 0.8)",
+    borderRadius: 24,
+    left: 16,
+    right: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    position: "absolute",
+    shadowColor: COLORS.primaryDeep,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  addressOptionSelected: {
-    borderColor: COLORS.primary,
-    borderWidth: 1.5
-  },
-  addressOptionTopRow: {
+  checkoutBarContent: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between"
   },
-  addressOptionName: {
-    color: COLORS.textPrimary,
-    flex: 1,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "700",
-    marginRight: 8
-  },
-  addressOptionType: {
-    color: COLORS.textMuted,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "700"
-  },
-  addressDefaultType: {
-    color: COLORS.success
-  },
-  addressOptionLine: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    marginTop: 2
-  },
-  addressForm: {
-    marginTop: 10
-  },
-  addressInput: {
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.border,
-    borderRadius: 9,
-    borderWidth: 1,
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.body,
-    fontSize: 13,
-    marginBottom: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 9
-  },
-  addressFormRow: {
-    flexDirection: "row",
-    gap: 8
-  },
-  addressInputHalf: {
+  checkoutPriceWrap: {
     flex: 1
   },
-  saveAddressButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.primaryDeep,
-    borderRadius: 10,
-    minHeight: 40,
-    justifyContent: "center"
-  },
-  saveAddressButtonText: {
-    color: COLORS.surface,
+  checkoutPriceLabel: {
+    color: COLORS.textMuted,
     fontFamily: FONTS.body,
-    fontSize: 13,
-    fontWeight: "800"
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 2
   },
-  checkoutCard: {
-    ...ELEVATION.card,
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginTop: 4,
-    padding: 12
-  },
-  couponBox: {
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 12,
-    padding: 10
-  },
-  couponTitle: {
+  checkoutPriceValue: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 8
-  },
-  couponRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 8
-  },
-  couponInput: {
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 9,
-    borderWidth: 1,
-    color: COLORS.textPrimary,
-    flex: 1,
-    fontFamily: FONTS.body,
-    fontSize: 13,
-    minHeight: 40,
-    paddingHorizontal: 10
-  },
-  applyCouponButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.primaryDeep,
-    borderRadius: 9,
-    minHeight: 40,
-    justifyContent: "center",
-    minWidth: 78,
-    paddingHorizontal: 12
-  },
-  applyCouponButtonText: {
-    color: COLORS.surface,
-    fontFamily: FONTS.body,
-    fontSize: 12,
+    fontSize: 22,
     fontWeight: "800"
   },
-  appliedCouponRow: {
+  savingsBox: {
+    backgroundColor: COLORS.chipBg,
+    borderRadius: 8,
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8
   },
-  appliedCouponText: {
-    color: COLORS.success,
-    flex: 1,
-    fontFamily: FONTS.body,
-    fontSize: 12,
+  savingsText: {
+    fontFamily: FONTS.heading,
+    fontSize: 13,
     fontWeight: "700",
-    marginRight: 8
+    color: COLORS.success,
   },
-  removeCouponText: {
-    color: COLORS.danger,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "700"
+  emptyTitle: {
+    color: COLORS.textPrimary,
+    fontFamily: FONTS.heading,
+    fontSize: 20,
+    fontWeight: "800",
+    marginTop: 16
   },
-  checkoutRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8
-  },
-  checkoutLabel: {
+  emptySubtitle: {
     color: COLORS.textSecondary,
     fontFamily: FONTS.body,
-    fontSize: 13,
-    fontWeight: "600"
-  },
-  checkoutValue: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
-    fontSize: 14,
-    fontWeight: "700"
-  },
-  discountLabel: {
-    color: COLORS.success,
-    fontFamily: FONTS.body,
-    fontSize: 13,
-    fontWeight: "700"
-  },
-  discountValue: {
-    color: COLORS.success,
-    fontFamily: FONTS.heading,
-    fontSize: 14,
-    fontWeight: "700"
-  },
-  checkoutTotalRow: {
-    borderTopColor: COLORS.border,
-    borderTopWidth: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    marginTop: 2,
-    paddingTop: 10
-  },
-  checkoutTotalLabel: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
     fontSize: 15,
-    fontWeight: "800"
+    marginTop: 8,
+    textAlign: "center"
   },
-  checkoutTotalValue: {
+  addressCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  changeAddressText: {
+    color: COLORS.primaryDeep,
+    fontFamily: FONTS.heading,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  addressDetailsWrap: {
+    backgroundColor: COLORS.background,
+    padding: 16,
+    borderRadius: 12,
+  },
+  addressName: {
+    fontFamily: FONTS.heading,
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  addressType: {
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+  },
+  addressLine: {
+    fontFamily: FONTS.body,
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 40,
+    maxHeight: "80%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontFamily: FONTS.heading,
+    fontSize: 20,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  closeModalBtn: {
+    padding: 4,
+  },
+  addressOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  addressOptionSelected: {
+    borderColor: COLORS.primaryDeep,
+    backgroundColor: COLORS.surfaceMuted,
+  },
+  addressOptionTextWrap: {
+    flex: 1,
+  },
+  couponHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  couponCardTitle: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
     fontSize: 16,
-    fontWeight: "800"
+    fontWeight: "700",
+    marginLeft: 8,
   },
-  placeOrderButton: {
+  couponInputContainer: {
+    flexDirection: "row",
     alignItems: "center",
-    backgroundColor: COLORS.success,
-    borderRadius: 10,
-    marginBottom: 8,
-    marginTop: 4,
-    minHeight: 44,
-    justifyContent: "center"
   },
-  placeOrderButtonDisabled: {
-    backgroundColor: "#A9B8AE"
-  },
-  placeOrderButtonText: {
-    color: COLORS.surface,
+  couponInput: {
+    flex: 1,
+    height: 48,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    paddingHorizontal: 16,
     fontFamily: FONTS.body,
     fontSize: 14,
-    fontWeight: "800"
+    color: COLORS.textPrimary,
+    backgroundColor: COLORS.background,
   },
-  clearButton: {
+  couponInputDisabled: {
+    backgroundColor: COLORS.surfaceMuted,
+    borderColor: "rgba(16, 185, 129, 0.2)",
+    color: COLORS.textSecondary,
+    fontWeight: "600",
+  },
+  couponInputError: {
+    borderColor: COLORS.danger,
+  },
+  couponButton: {
+    backgroundColor: COLORS.primaryDeep,
+    borderRadius: 14,
+    height: 48,
+    paddingHorizontal: 20,
+    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: COLORS.danger,
-    borderRadius: 10,
-    marginTop: 6,
-    minHeight: 42,
-    justifyContent: "center"
+    marginLeft: 10,
+    minWidth: 72,
   },
-  clearButtonText: {
+  couponButtonRemove: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: COLORS.danger,
+  },
+  couponButtonText: {
     color: COLORS.surface,
+    fontFamily: FONTS.heading,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  couponButtonTextRemove: {
+    color: COLORS.danger,
+    fontFamily: FONTS.heading,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  couponErrorText: {
+    color: COLORS.danger,
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    marginTop: 8,
+    marginLeft: 4,
+  },
+  couponSuccessBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.chipBg,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 12,
+  },
+  couponSuccessText: {
+    color: COLORS.textSecondary,
     fontFamily: FONTS.body,
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: "600",
+    marginLeft: 6,
   },
-  primaryButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.primary,
-    borderRadius: 10,
-    marginTop: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 11
-  },
-  primaryButtonText: {
-    color: COLORS.surface,
+  billLabelCoupon: {
+    color: COLORS.textSecondary,
     fontFamily: FONTS.body,
     fontSize: 14,
-    fontWeight: "800"
+    fontWeight: "600",
   },
-  pressed: {
-    opacity: 0.84
-  }
+  billValueCoupon: {
+    color: COLORS.success,
+    fontFamily: FONTS.heading,
+    fontSize: 14,
+    fontWeight: "700",
+  },
 });
+

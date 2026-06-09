@@ -1,711 +1,562 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  Easing,
   Image,
-  ImageStyle,
-  LayoutChangeEvent,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
-  StyleProp,
   Text,
+  View,
   useWindowDimensions,
-  View
+  NativeSyntheticEvent,
+  NativeScrollEvent
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
-import { getErrorMessage } from "../lib/api-client";
+import { SkeletonBlock } from "../components/common/SkeletonBlock";
+
+import { apiClient, getErrorMessage } from "../lib/api-client";
 import { formatCurrency } from "../lib/format";
+import { findBestOfferVariant, getProductCardImageUri, getVariantDiscountLabel } from "../lib/product-utils";
 import { useAuth } from "../providers/auth-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
 import type { ApiResponse, Cart, Product, ProductVariant } from "../types/api";
-import type { CartDropSource } from "./shop-screen";
+import type { RootStackParamList } from "../navigation/types";
 
-type ProductDetailScreenProps = {
-  bottomInset?: number;
-  onBack: () => void;
-  onCartDrop?: (source: CartDropSource) => void;
-  onRequireAuth: () => void;
-  product: Product;
-};
+type Props = NativeStackScreenProps<RootStackParamList, "ProductDetail">;
 
-type ShimmerImageProps = {
-  resizeMode?: "cover" | "contain";
-  sourceUri: string;
-  style: StyleProp<ImageStyle>;
-};
+export function ProductDetailScreen({ navigation, route }: Props) {
+  const insets = useSafeAreaInsets();
+  const { product } = route.params;
+  const imageUri = getProductCardImageUri(product);
 
-const findCheapestVariant = (variants: ProductVariant[]) => {
-  if (variants.length === 0) {
-    return null;
-  }
+  const { isAuthenticated, authorizedRequest } = useAuth();
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+  const [isLoadingVariants, setIsLoadingVariants] = useState(true);
+  const [isAddingToCart, setIsAddingToCart] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  return variants.reduce((cheapest, current) => {
-    if (Number(current.price) < Number(cheapest.price)) {
-      return current;
-    }
-
-    return cheapest;
-  }, variants[0]);
-};
-
-const getProductDetailImageUri = (product: Product) =>
-  product.imageUrls?.detail ?? product.imageUrls?.card ?? product.imageUrls?.thumbnail ?? product.imageUrl;
-
-const getProductGalleryImageUris = (product: Product) => {
-  const primaryImageUri = getProductDetailImageUri(product);
-
-  if (!primaryImageUri) {
-    return [];
-  }
-
-  return [primaryImageUri, primaryImageUri, primaryImageUri, primaryImageUri];
-};
-
-function ShimmerImage({ resizeMode = "cover", sourceUri, style }: ShimmerImageProps) {
-  const shimmerProgress = useRef(new Animated.Value(0)).current;
-  const shimmerOpacity = useRef(new Animated.Value(1)).current;
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [canHideShimmer, setCanHideShimmer] = useState(false);
-  const [frameWidth, setFrameWidth] = useState(320);
-  const shimmerBandWidth = Math.max(120, frameWidth * 0.42);
-  const shimmerTranslateX = shimmerProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-shimmerBandWidth, frameWidth + shimmerBandWidth]
-  });
+  const selectedVariant = useMemo(
+    () => variants.find((v) => v.id === selectedVariantId) ?? null,
+    [variants, selectedVariantId]
+  );
 
   useEffect(() => {
-    shimmerProgress.setValue(0);
-    shimmerOpacity.setValue(1);
-    setIsLoaded(false);
-    setCanHideShimmer(false);
+    let isMounted = true;
 
-    const minimumVisibilityTimer = setTimeout(() => {
-      setCanHideShimmer(true);
-    }, 950);
+    const fetchVariants = async () => {
+      setIsLoadingVariants(true);
+      setError(null);
+      try {
+        const response = await apiClient<ApiResponse<{ product: Product }>>(
+          `/products/${product.id}`
+        );
+        if (isMounted) {
+          const activeVariants = response.data.product.variants.filter((v) => v.isActive);
+          setVariants(activeVariants);
+          if (activeVariants.length > 0) {
+            setSelectedVariantId(findBestOfferVariant(activeVariants)?.id ?? activeVariants[0].id);
+          }
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(getErrorMessage(err, "Could not load variants"));
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingVariants(false);
+        }
+      }
+    };
 
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(shimmerProgress, {
-          duration: 0,
-          toValue: 0,
-          useNativeDriver: true
-        }),
-        Animated.timing(shimmerProgress, {
-          duration: 1450,
-          easing: Easing.inOut(Easing.cubic),
-          toValue: 1,
-          useNativeDriver: true
-        }),
-        Animated.delay(120)
-      ])
-    );
-
-    animation.start();
+    void fetchVariants();
 
     return () => {
-      clearTimeout(minimumVisibilityTimer);
-      animation.stop();
+      isMounted = false;
     };
-  }, [shimmerOpacity, shimmerProgress, sourceUri]);
+  }, [product.id]);
 
-  useEffect(() => {
-    if (!isLoaded || !canHideShimmer) {
+  const handleAddToCart = useCallback(async () => {
+    if (!selectedVariantId) return;
+
+    if (!isAuthenticated) {
+      navigation.navigate("Main", { screen: "AccountTab" });
       return;
     }
 
-    Animated.timing(shimmerOpacity, {
-      duration: 180,
-      toValue: 0,
-      useNativeDriver: true
-    }).start();
-  }, [canHideShimmer, isLoaded, shimmerOpacity]);
-
-  const handleLayout = (event: LayoutChangeEvent) => {
-    setFrameWidth(Math.max(1, event.nativeEvent.layout.width));
-  };
+    setIsAddingToCart(true);
+    try {
+      await authorizedRequest<ApiResponse<{ cart: Cart }>>("/cart/items", {
+        method: "POST",
+        body: JSON.stringify({ productId: product.id, variantId: selectedVariantId, quantity: 1 })
+      });
+      navigation.goBack();
+    } catch (addError) {
+      Alert.alert("Error", getErrorMessage(addError, "Could not add item to cart."));
+    } finally {
+      setIsAddingToCart(false);
+    }
+  }, [selectedVariantId, isAuthenticated, authorizedRequest, product.id, navigation]);
 
   return (
-    <View onLayout={handleLayout} style={[styles.shimmerImageFrame, style]}>
-      <Image
-        onLoadEnd={() => setIsLoaded(true)}
-        onLoadStart={() => setIsLoaded(false)}
-        resizeMode={resizeMode}
-        source={{ uri: sourceUri }}
-        style={styles.shimmerImage}
-      />
-      {!isLoaded || !canHideShimmer ? (
-        <Animated.View pointerEvents="none" style={[styles.shimmerOverlay, { opacity: shimmerOpacity }]}>
-          <LinearGradient
-            colors={["#E7F0EA", "#F4FAF6", "#E5EEE8"]}
-            end={{ x: 1, y: 1 }}
-            start={{ x: 0, y: 0 }}
-            style={styles.shimmerBase}
-          />
-          <Animated.View
-            style={[
-              styles.shimmerBandTrack,
-              {
-                width: shimmerBandWidth,
-                transform: [{ translateX: shimmerTranslateX }, { rotate: "11deg" }]
-              }
+    <View style={styles.root}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
+        <View style={styles.imageHeader}>
+          {imageUri ? (
+            <ProductImageCarousel imageUri={imageUri} />
+          ) : (
+            <View style={styles.imagePlaceholder}>
+              <Ionicons color={COLORS.textMuted} name="image-outline" size={64} />
+            </View>
+          )}
+
+          <Pressable
+            onPress={() => navigation.goBack()}
+            style={({ pressed }) => [
+              styles.backButton,
+              { top: Math.max(insets.top, 20) },
+              pressed && styles.pressed
             ]}
           >
-            <LinearGradient
-              colors={[
-                "rgba(255,255,255,0)",
-                "rgba(255,255,255,0.34)",
-                "rgba(255,255,255,0.92)",
-                "rgba(255,255,255,0.34)",
-                "rgba(255,255,255,0)"
-              ]}
-              end={{ x: 1, y: 0.5 }}
-              locations={[0, 0.28, 0.5, 0.72, 1]}
-              start={{ x: 0, y: 0.5 }}
-              style={styles.shimmerBand}
-            />
-          </Animated.View>
-        </Animated.View>
-      ) : null}
+            <Ionicons color={COLORS.textPrimary} name="close" size={24} />
+          </Pressable>
+        </View>
+
+        <View style={[styles.detailsContainer, { paddingBottom: insets.bottom + 120 }]}>
+          <View style={styles.metaPill}>
+            <Text style={styles.metaText}>{product.category.name}</Text>
+          </View>
+          
+          <Text style={styles.title}>{product.name}</Text>
+          {product.description ? <Text style={styles.description}>{product.description}</Text> : null}
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <Text style={styles.sectionTitle}>Select Option</Text>
+          
+          {isLoadingVariants ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color={COLORS.primary} size="large" />
+            </View>
+          ) : variants.length === 0 ? (
+            <Text style={styles.outOfStockText}>Currently out of stock.</Text>
+          ) : (
+            <View style={styles.variantsList}>
+              {variants.map((variant) => {
+                const isSelected = variant.id === selectedVariantId;
+                const isOutOfStock = variant.stock <= 0;
+                const discountLabel = getVariantDiscountLabel(variant);
+
+                return (
+                  <Pressable
+                    disabled={isOutOfStock}
+                    key={variant.id}
+                    onPress={() => setSelectedVariantId(variant.id)}
+                    style={[
+                      styles.variantItem,
+                      isSelected && styles.variantItemSelected,
+                      isOutOfStock && styles.variantItemDisabled
+                    ]}
+                  >
+                    <View style={styles.variantInfo}>
+                      <Text style={[styles.variantName, isSelected && styles.variantNameSelected]}>
+                        {variant.name}
+                      </Text>
+                      <Text style={[styles.variantUnit, isSelected && styles.variantUnitSelected]}>
+                        {variant.unit}
+                      </Text>
+                    </View>
+                    <View style={styles.variantPriceWrap}>
+                      <Text style={[styles.variantPrice, isSelected && styles.variantPriceSelected]}>
+                        {formatCurrency(variant.price)}
+                      </Text>
+                      {variant.mrp && variant.mrp !== variant.price ? (
+                        <Text style={styles.variantMrp}>{formatCurrency(variant.mrp)}</Text>
+                      ) : null}
+                      {discountLabel ? <Text style={styles.variantDiscount}>{discountLabel}</Text> : null}
+                      {isOutOfStock && <Text style={styles.outOfStockBadge}>Out of Stock</Text>}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Floating Action Bar */}
+      <View style={[styles.actionBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={styles.actionBarContent}>
+          <View style={styles.priceContainer}>
+            <Text style={styles.priceLabel}>Price</Text>
+            <Text style={styles.priceValue}>
+              {selectedVariant ? formatCurrency(selectedVariant.price) : "--"}
+            </Text>
+            {selectedVariant && selectedVariant.mrp && selectedVariant.mrp !== selectedVariant.price ? (
+              <Text style={styles.priceMrp}>{formatCurrency(selectedVariant.mrp)}</Text>
+            ) : null}
+            {getVariantDiscountLabel(selectedVariant) ? (
+              <Text style={styles.priceDiscount}>{getVariantDiscountLabel(selectedVariant)}</Text>
+            ) : null}
+          </View>
+          
+          <Pressable
+            disabled={!selectedVariant || selectedVariant.stock <= 0 || isAddingToCart}
+            onPress={handleAddToCart}
+            style={({ pressed }) => [
+              styles.addButton,
+              (!selectedVariant || selectedVariant.stock <= 0) && styles.addButtonDisabled,
+              pressed && styles.addButtonPressed
+            ]}
+          >
+            {isAddingToCart ? (
+              <ActivityIndicator color={COLORS.surface} size="small" />
+            ) : (
+              <>
+                <Ionicons color={COLORS.surface} name="cart" size={20} />
+                <Text style={styles.addButtonText}>Add to Cart</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
     </View>
   );
 }
 
-export function ProductDetailScreen({
-  bottomInset = 24,
-  onBack,
-  onCartDrop,
-  onRequireAuth,
-  product
-}: ProductDetailScreenProps) {
-  const insets = useSafeAreaInsets();
-  const { authorizedRequest, isAuthenticated } = useAuth();
-  const { width: viewportWidth } = useWindowDimensions();
-  const galleryScrollRef = useRef<ScrollView>(null);
-  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
-  const [addingVariantId, setAddingVariantId] = useState<string | null>(null);
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const imageUri = getProductDetailImageUri(product);
-  const galleryImageUris = useMemo(() => getProductGalleryImageUris(product), [product]);
-  const imagePanelWidth = viewportWidth;
-  const variants = useMemo(() => product.variants.filter((variant) => variant.isActive), [product.variants]);
-  const selectedVariant = useMemo(() => {
-    if (variants.length === 0) {
-      return null;
-    }
-
-    if (selectedVariantId) {
-      const variant = variants.find((item) => item.id === selectedVariantId);
-
-      if (variant) {
-        return variant;
-      }
-    }
-
-    return findCheapestVariant(variants);
-  }, [selectedVariantId, variants]);
-  const isOutOfStock = !selectedVariant || selectedVariant.stock <= 0;
-
-  const handleGalleryMomentumEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / imagePanelWidth);
-
-    setActiveImageIndex(Math.max(0, Math.min(nextIndex, galleryImageUris.length - 1)));
-  };
-
-  const selectGalleryImage = (index: number) => {
-    setActiveImageIndex(index);
-    galleryScrollRef.current?.scrollTo({
-      animated: true,
-      x: index * imagePanelWidth
-    });
-  };
-
-  const handleAddToCart = async (dropSource?: CartDropSource | null) => {
-    if (!selectedVariant) {
-      return;
-    }
-
-    if (!isAuthenticated) {
-      Alert.alert("Sign in required", "Please sign in before adding items to cart.");
-      onRequireAuth();
-      return;
-    }
-
-    setAddingVariantId(selectedVariant.id);
-
-    try {
-      await authorizedRequest<ApiResponse<{ cart: Cart }>>("/cart/items", {
-        method: "POST",
-        body: JSON.stringify({
-          quantity: 1,
-          variantId: selectedVariant.id
-        })
-      });
-      if (dropSource) {
-        onCartDrop?.(dropSource);
-      }
-    } catch (addError) {
-      Alert.alert("Could not add to cart", getErrorMessage(addError, "Please try again"));
-    } finally {
-      setAddingVariantId(null);
-    }
-  };
-
-  return (
-    <SafeAreaView edges={["left", "right"]} style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 92 }]}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={[styles.imagePanel, { height: 318 + insets.top }]}>
-          {galleryImageUris.length > 0 ? (
-            <>
-              <ScrollView
-                ref={galleryScrollRef}
-                decelerationRate="fast"
-                horizontal
-                onMomentumScrollEnd={handleGalleryMomentumEnd}
-                pagingEnabled
-                scrollEventThrottle={16}
-                showsHorizontalScrollIndicator={false}
-              >
-                {galleryImageUris.map((galleryImageUri, index) => (
-                  <ShimmerImage
-                    key={`${galleryImageUri}-${index}`}
-                    resizeMode="cover"
-                    sourceUri={galleryImageUri}
-                    style={[styles.productImage, { width: imagePanelWidth }]}
-                  />
-                ))}
-              </ScrollView>
-
-              <View style={styles.galleryCounter}>
-                <Text style={styles.galleryCounterText}>
-                  {activeImageIndex + 1}/{galleryImageUris.length}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <View style={styles.productImagePlaceholder}>
-              <Ionicons color={COLORS.textMuted} name="image-outline" size={34} />
-            </View>
-          )}
-        </View>
-
-        {galleryImageUris.length > 0 ? (
-          <ScrollView contentContainerStyle={styles.thumbnailRow} horizontal showsHorizontalScrollIndicator={false}>
-            {galleryImageUris.map((galleryImageUri, index) => {
-              const isActive = index === activeImageIndex;
-
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  key={`${galleryImageUri}-thumb-${index}`}
-                  onPress={() => selectGalleryImage(index)}
-                  style={[styles.thumbnailButton, isActive ? styles.thumbnailButtonActive : null]}
-                >
-                  <ShimmerImage resizeMode="cover" sourceUri={galleryImageUri} style={styles.thumbnailImage} />
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        ) : null}
-
-        <View style={styles.categoryPill}>
-          <Ionicons color={COLORS.primaryDeep} name="leaf-outline" size={13} />
-          <Text numberOfLines={1} style={styles.categoryText}>
-            {product.category.name}
-          </Text>
-        </View>
-
-        <Text style={styles.productName}>{product.name}</Text>
-        <Text style={styles.description}>
-          {product.description?.trim() || "Fresh grocery essential selected for everyday home needs."}
-        </Text>
-
-        <View style={styles.infoRow}>
-          <View style={styles.infoTile}>
-            <Ionicons color={COLORS.success} name="shield-checkmark-outline" size={18} />
-            <Text style={styles.infoTitle}>Quality checked</Text>
-          </View>
-          <View style={styles.infoTile}>
-            <Ionicons color={COLORS.info} name="time-outline" size={18} />
-            <Text style={styles.infoTitle}>Fast delivery</Text>
-          </View>
-        </View>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Choose Pack</Text>
-          <Text style={styles.sectionHint}>{variants.length} options</Text>
-        </View>
-
-        <View style={styles.variantList}>
-          {variants.map((variant) => {
-            const isSelected = selectedVariant?.id === variant.id;
-            const variantOutOfStock = variant.stock <= 0;
-
-            return (
-              <Pressable
-                disabled={variantOutOfStock}
-                key={variant.id}
-                onPress={() => setSelectedVariantId(variant.id)}
-                style={[
-                  styles.variantOption,
-                  isSelected ? styles.variantOptionSelected : null,
-                  variantOutOfStock ? styles.variantOptionDisabled : null
-                ]}
-              >
-                <View style={styles.variantOptionText}>
-                  <Text style={styles.variantName}>{variant.name}</Text>
-                  <Text style={styles.variantMeta}>
-                    {variant.unit} · {variantOutOfStock ? "Out of stock" : `${variant.stock} in stock`}
-                  </Text>
-                </View>
-                <Text style={styles.variantPrice}>{formatCurrency(variant.price)}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </ScrollView>
-
-      <View pointerEvents="box-none" style={[styles.headerRow, { top: insets.top + 10 }]}>
-        <Pressable accessibilityRole="button" onPress={onBack} style={styles.iconButton}>
-          <Ionicons color={COLORS.textPrimary} name="chevron-back" size={22} />
-        </Pressable>
-      </View>
-
-      <View style={[styles.footer, { bottom: Math.max(bottomInset - 2, 14) }]}>
-        <View style={styles.footerPriceBlock}>
-          <Text style={styles.footerLabel}>Total</Text>
-          <Text style={styles.footerPrice}>{selectedVariant ? formatCurrency(selectedVariant.price) : "Unavailable"}</Text>
-        </View>
-        <Pressable
-          disabled={!selectedVariant || isOutOfStock || addingVariantId === selectedVariant?.id}
-          onPress={(event) =>
-            void handleAddToCart({
-              imageUri,
-              x: event.nativeEvent.pageX,
-              y: event.nativeEvent.pageY
-            })
-          }
-          style={[
-            styles.addButton,
-            !selectedVariant || isOutOfStock ? styles.addButtonDisabled : null,
-            addingVariantId === selectedVariant?.id ? styles.addButtonBusy : null
-          ]}
-        >
-          {selectedVariant && addingVariantId === selectedVariant.id ? (
-            <ActivityIndicator color={COLORS.surface} size="small" />
-          ) : (
-            <>
-              <Ionicons color={COLORS.surface} name="bag-add" size={18} />
-              <Text style={styles.addButtonText}>{isOutOfStock ? "Out of Stock" : "Add to Cart"}</Text>
-            </>
-          )}
-        </Pressable>
-      </View>
-    </SafeAreaView>
-  );
-}
-
 const styles = StyleSheet.create({
-  safeArea: {
-    backgroundColor: COLORS.background,
-    flex: 1
+  root: {
+    flex: 1,
+    backgroundColor: COLORS.background
   },
-  content: {
-    paddingHorizontal: 14,
-    paddingTop: 0
+  scrollContent: {
+    flexGrow: 1,
+    backgroundColor: COLORS.surface
   },
-  headerRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    left: 14,
-    position: "absolute",
-    right: 14,
-    zIndex: 20
+  imageHeader: {
+    width: "100%",
+    height: 380,
+    backgroundColor: COLORS.surfaceMuted,
+    position: "relative"
   },
-  iconButton: {
-    ...ELEVATION.floating,
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.88)",
-    borderColor: "rgba(255,255,255,0.72)",
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 40,
-    justifyContent: "center",
-    width: 40
-  },
-  imagePanel: {
-    ...ELEVATION.card,
-    backgroundColor: "#F3F8F5",
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    marginHorizontal: -14,
-    overflow: "hidden"
-  },
-  productImage: {
+  image: {
+    width: "100%",
     height: "100%"
   },
-  shimmerImageFrame: {
-    backgroundColor: "#EAF2ED",
-    overflow: "hidden"
+  carouselContainer: {
+    width: "100%",
+    height: 380,
   },
-  shimmerImage: {
-    height: "100%",
-    width: "100%"
-  },
-  shimmerOverlay: {
-    backgroundColor: "#EAF2ED",
-    bottom: 0,
-    left: 0,
+  paginationDots: {
     position: "absolute",
+    bottom: 48,
+    left: 0,
     right: 0,
-    top: 0
-  },
-  shimmerBase: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0
-  },
-  shimmerBandTrack: {
-    height: "150%",
-    left: 0,
-    position: "absolute",
-    top: "-25%"
-  },
-  shimmerBand: {
-    flex: 1
-  },
-  productImagePlaceholder: {
-    alignItems: "center",
-    flex: 1,
-    justifyContent: "center"
-  },
-  galleryCounter: {
-    backgroundColor: "rgba(31,35,48,0.72)",
-    borderRadius: 999,
-    bottom: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    position: "absolute",
-    right: 12
-  },
-  galleryCounterText: {
-    color: COLORS.surface,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "900"
-  },
-  thumbnailRow: {
-    gap: 9,
-    paddingRight: 2,
-    paddingTop: 10
-  },
-  thumbnailButton: {
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    height: 62,
-    overflow: "hidden",
-    padding: 3,
-    width: 62
-  },
-  thumbnailButtonActive: {
-    borderColor: COLORS.primary,
-    borderWidth: 2
-  },
-  thumbnailImage: {
-    borderRadius: 9,
-    height: "100%",
-    width: "100%"
-  },
-  categoryPill: {
-    alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: COLORS.surfaceMuted,
-    borderRadius: 999,
     flexDirection: "row",
-    marginTop: 16,
-    maxWidth: "100%",
-    paddingHorizontal: 11,
-    paddingVertical: 6
+    justifyContent: "center",
+    gap: 8,
   },
-  categoryText: {
-    color: COLORS.primaryDeep,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "800",
-    marginLeft: 5
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.5)",
   },
-  productName: {
-    color: COLORS.textPrimary,
+  activeDot: {
+    backgroundColor: COLORS.primary,
+    width: 20,
+  },
+  imagePlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    opacity: 0.5
+  },
+  backButton: {
+    position: "absolute",
+    left: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...ELEVATION.card
+  },
+  pressed: {
+    opacity: 0.8
+  },
+  detailsContainer: {
+    padding: 24,
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    marginTop: -32,
+    flex: 1,
+    ...ELEVATION.sheet
+  },
+  metaPill: {
+    backgroundColor: COLORS.chipBg,
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 16
+  },
+  metaText: {
     fontFamily: FONTS.heading,
-    fontSize: 25,
-    fontWeight: "900",
-    lineHeight: 31,
-    marginTop: 10
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.primaryDeep
+  },
+  title: {
+    fontFamily: FONTS.heading,
+    fontSize: 28,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    lineHeight: 34,
+    marginBottom: 12
   },
   description: {
+    fontFamily: FONTS.body,
+    fontSize: 15,
     color: COLORS.textSecondary,
+    lineHeight: 22,
+    marginBottom: 24
+  },
+  errorText: {
+    color: COLORS.danger,
     fontFamily: FONTS.body,
     fontSize: 14,
-    fontWeight: "500",
-    lineHeight: 21,
-    marginTop: 8
-  },
-  infoRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 16
-  },
-  infoTile: {
-    alignItems: "center",
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    flex: 1,
-    flexDirection: "row",
-    minHeight: 46,
-    paddingHorizontal: 10
-  },
-  infoTitle: {
-    color: COLORS.textSecondary,
-    flexShrink: 1,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "800",
-    marginLeft: 7
-  },
-  sectionHeader: {
-    alignItems: "flex-end",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 20
+    marginBottom: 16
   },
   sectionTitle: {
-    color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
     fontSize: 18,
-    fontWeight: "800"
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginBottom: 16
   },
-  sectionHint: {
-    color: COLORS.textMuted,
+  loadingContainer: {
+    paddingVertical: 32,
+    alignItems: "center"
+  },
+  outOfStockText: {
     fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "700"
+    fontSize: 15,
+    color: COLORS.danger,
+    paddingVertical: 16
   },
-  variantList: {
-    gap: 9,
-    marginTop: 10
+  variantsList: {
+    gap: 12
   },
-  variantOption: {
-    alignItems: "center",
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
+  variantItem: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    minHeight: 64,
-    paddingHorizontal: 12,
-    paddingVertical: 10
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface
   },
-  variantOptionSelected: {
+  variantItemSelected: {
     borderColor: COLORS.primary,
-    borderWidth: 1.5
+    backgroundColor: COLORS.chipBg
   },
-  variantOptionDisabled: {
-    opacity: 0.52
+  variantItemDisabled: {
+    opacity: 0.5,
+    backgroundColor: COLORS.surfaceMuted
   },
-  variantOptionText: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 10
+  variantInfo: {
+    flex: 1
   },
   variantName: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
-    fontSize: 14,
-    fontWeight: "800"
-  },
-  variantMeta: {
-    color: COLORS.textMuted,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 4
-  },
-  variantPrice: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
-    fontSize: 14,
-    fontWeight: "900"
-  },
-  footer: {
-    ...ELEVATION.floating,
-    alignItems: "center",
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 18,
-    borderWidth: 1,
-    bottom: 14,
-    flexDirection: "row",
-    left: 14,
-    padding: 10,
-    position: "absolute",
-    right: 14
-  },
-  footerPriceBlock: {
-    flex: 1,
-    minWidth: 0,
-    paddingLeft: 4,
-    paddingRight: 10
-  },
-  footerLabel: {
-    color: COLORS.textMuted,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "700"
-  },
-  footerPrice: {
-    color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
     fontSize: 16,
-    fontWeight: "900",
-    marginTop: 2
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginBottom: 4
   },
-  addButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.primary,
-    borderRadius: 13,
-    flexDirection: "row",
-    gap: 7,
-    justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: 18
+  variantNameSelected: {
+    color: COLORS.primaryDeep
   },
-  addButtonDisabled: {
-    backgroundColor: "#C8C4BD"
-  },
-  addButtonBusy: {
-    opacity: 0.84
-  },
-  addButtonText: {
-    color: COLORS.surface,
+  variantUnit: {
     fontFamily: FONTS.body,
     fontSize: 13,
-    fontWeight: "900"
+    color: COLORS.textMuted
+  },
+  variantUnitSelected: {
+    color: COLORS.primaryDeep
+  },
+  variantPriceWrap: {
+    alignItems: "flex-end"
+  },
+  variantPrice: {
+    fontFamily: FONTS.heading,
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.primaryDeep
+  },
+  variantPriceSelected: {
+    color: COLORS.primaryDeep
+  },
+  variantMrp: {
+    fontFamily: FONTS.body,
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.textMuted,
+    textDecorationLine: "line-through",
+    marginTop: 2
+  },
+  variantDiscount: {
+    color: COLORS.primaryDeep,
+    fontFamily: FONTS.heading,
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  outOfStockBadge: {
+    fontFamily: FONTS.body,
+    fontSize: 11,
+    color: COLORS.danger,
+    marginTop: 4,
+    fontWeight: "600"
+  },
+  actionBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    ...ELEVATION.floating
+  },
+  actionBarContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  priceContainer: {
+    flex: 1
+  },
+  priceLabel: {
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginBottom: 4
+  },
+  priceValue: {
+    fontFamily: FONTS.heading,
+    fontSize: 24,
+    fontWeight: "800",
+    color: COLORS.primaryDeep
+  },
+  priceMrp: {
+    fontFamily: FONTS.body,
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.textMuted,
+    textDecorationLine: "line-through",
+  },
+  priceDiscount: {
+    alignSelf: "flex-start",
+    backgroundColor: COLORS.chipBg,
+    borderRadius: 999,
+    color: COLORS.primaryDeep,
+    fontFamily: FONTS.heading,
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  addButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 16,
+    gap: 8,
+    ...ELEVATION.card
+  },
+  addButtonDisabled: {
+    backgroundColor: COLORS.textMuted,
+    elevation: 0
+  },
+  addButtonPressed: {
+    backgroundColor: COLORS.primaryDeep
+  },
+  addButtonText: {
+    fontFamily: FONTS.heading,
+    fontSize: 16,
+    fontWeight: "800",
+    color: COLORS.surface
   }
 });
+
+const CAROUSEL_IMAGE_COUNT = 3;
+
+function ProductImageCarousel({ imageUri }: { imageUri: string }) {
+  const { width } = useWindowDimensions();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [imagesLoaded, setImagesLoaded] = useState<Record<number, boolean>>({});
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const x = event.nativeEvent.contentOffset.x;
+    setActiveIndex(Math.round(x / width));
+  };
+
+  const images = Array(CAROUSEL_IMAGE_COUNT).fill(imageUri);
+
+  return (
+    <View style={styles.carouselContainer}>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={handleScroll}
+        scrollEventThrottle={16}
+      >
+        {images.map((uri, index) => (
+          <View key={index} style={{ width, height: 380 }}>
+            {!imagesLoaded[index] && (
+              <View style={StyleSheet.absoluteFill}>
+                <SkeletonBlock height={380} radius={0} />
+              </View>
+            )}
+            <Image
+              source={{ uri }}
+              style={styles.image}
+              resizeMode="cover"
+              onLoad={() => setImagesLoaded(prev => ({ ...prev, [index]: true }))}
+            />
+          </View>
+        ))}
+      </ScrollView>
+      <View style={styles.paginationDots}>
+        {images.map((_, index) => (
+          <View
+            key={index}
+            style={[
+              styles.dot,
+              index === activeIndex && styles.activeDot
+            ]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}

@@ -3,52 +3,39 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
+import type { CompositeScreenProps } from "@react-navigation/native";
+import type { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { getErrorMessage } from "../lib/api-client";
-import { formatCurrency, formatDateTime } from "../lib/format";
 import { useAuth } from "../providers/auth-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
 import type { ApiResponse, Order, PaginationMeta } from "../types/api";
+import type { MainTabParamList, RootStackParamList } from "../navigation/types";
 
-type OrdersScreenProps = {
-  bottomInset?: number;
-  onRequireAuth: () => void;
-};
+import { OrderCard } from "../components/orders/OrderCard";
+import { OrdersSkeleton } from "../components/orders/OrdersSkeleton";
+import { Button } from "../components/common/Button";
+
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<MainTabParamList, "OrdersTab">,
+  NativeStackScreenProps<RootStackParamList>
+>;
 
 const ORDERS_PAGE_LIMIT = 30;
 
-const statusStyles: Record<Order["status"], { textColor: string; bgColor: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  PENDING: { textColor: "#8A5B00", bgColor: "#FFF4D6", icon: "time-outline" },
-  CONFIRMED: { textColor: "#0A5AA0", bgColor: "#E6F0FF", icon: "checkmark-circle-outline" },
-  PACKED: { textColor: "#8A4A00", bgColor: "#FFE9D6", icon: "cube-outline" },
-  OUT_FOR_DELIVERY: { textColor: "#0A6B77", bgColor: "#E4F8FA", icon: "bicycle-outline" },
-  DELIVERED: { textColor: "#186D47", bgColor: "#E6F8EE", icon: "checkmark-done-outline" },
-  CANCELLED: { textColor: "#A23030", bgColor: "#FFEAEA", icon: "close-circle-outline" }
-};
+export function OrdersScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const bottomInset = insets.bottom + 80;
 
-function SkeletonBlock({
-  height,
-  width = "100%",
-  radius = 10,
-  style
-}: {
-  height: number;
-  width?: number | `${number}%`;
-  radius?: number;
-  style?: object;
-}) {
-  return <View style={[styles.skeletonBlock, { borderRadius: radius, height, width }, style]} />;
-}
-
-export function OrdersScreen({ onRequireAuth, bottomInset = 24 }: OrdersScreenProps) {
   const { isReady, isAuthenticated, authorizedRequest } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -65,40 +52,34 @@ export function OrdersScreen({ onRequireAuth, bottomInset = 24 }: OrdersScreenPr
     setOrders(response.data.orders);
   }, [authorizedRequest]);
 
-  useEffect(() => {
-    if (!isReady) {
-      return;
-    }
-
-    if (!isAuthenticated) {
-      setOrders([]);
-      setIsLoading(false);
-      return;
-    }
-
-    const fetchOrders = async () => {
-      setIsLoading(true);
-
-      try {
-        await loadOrders();
-      } catch (loadError) {
-        setError(getErrorMessage(loadError, "Unable to load orders"));
-      } finally {
+  useFocusEffect(
+    useCallback(() => {
+      if (!isReady) return;
+      if (!isAuthenticated) {
+        setOrders([]);
         setIsLoading(false);
+        return;
       }
-    };
 
-    void fetchOrders();
-  }, [isAuthenticated, isReady, loadOrders]);
+      const fetchOrders = async () => {
+        setIsLoading(true);
+        try {
+          await loadOrders();
+        } catch (loadError) {
+          setError(getErrorMessage(loadError, "Unable to load orders"));
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      void fetchOrders();
+    }, [isAuthenticated, isReady, loadOrders])
+  );
 
   const handleRefresh = useCallback(async () => {
-    if (!isAuthenticated) {
-      return;
-    }
-
+    if (!isAuthenticated) return;
     setIsRefreshing(true);
     setError(null);
-
     try {
       await loadOrders();
     } catch (refreshError) {
@@ -111,7 +92,7 @@ export function OrdersScreen({ onRequireAuth, bottomInset = 24 }: OrdersScreenPr
   if (!isReady) {
     return (
       <View style={styles.centeredContainer}>
-        <ActivityIndicator color={COLORS.primary} />
+        <ActivityIndicator color={COLORS.primary} size="large" />
       </View>
     );
   }
@@ -119,50 +100,35 @@ export function OrdersScreen({ onRequireAuth, bottomInset = 24 }: OrdersScreenPr
   if (!isAuthenticated) {
     return (
       <View style={styles.centeredContainer}>
-        <Ionicons color={COLORS.primary} name="receipt-outline" size={32} />
+        <Ionicons color={COLORS.primaryDeep} name="receipt-outline" size={64} />
         <Text style={styles.emptyTitle}>Sign in to view your orders</Text>
         <Text style={styles.emptySubtitle}>Track all your placed orders and delivery updates here.</Text>
-        <Pressable onPress={onRequireAuth} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-          <Text style={styles.primaryButtonText}>Go to Account</Text>
-        </Pressable>
+        <Button
+          label="Go to Account"
+          onPress={() => navigation.navigate("AccountTab")}
+          style={{ marginTop: 24, width: "60%" }}
+        />
       </View>
     );
   }
 
   if (isLoading) {
     return (
-      <SafeAreaView edges={["left", "right"]} style={styles.safeArea}>
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottomInset }]} showsVerticalScrollIndicator={false}>
-          <View style={styles.orderSkeletonHero}>
-            <SkeletonBlock height={24} width="42%" />
-            <SkeletonBlock height={12} width="34%" style={styles.skeletonGapTop} />
-          </View>
-
-          {[0, 1, 2, 3].map((item) => (
-            <View key={item} style={styles.orderCard}>
-              <View style={styles.skeletonRow}>
-                <SkeletonBlock height={14} width="46%" />
-                <SkeletonBlock height={24} width={92} radius={999} />
-              </View>
-              <SkeletonBlock height={12} width="62%" style={styles.skeletonLargeGapTop} />
-              <SkeletonBlock height={12} width="38%" style={styles.skeletonGapTop} />
-              <SkeletonBlock height={12} width="74%" style={styles.skeletonLargeGapTop} />
-              <SkeletonBlock height={16} width="34%" style={styles.skeletonLargeGapTop} />
-            </View>
-          ))}
-        </ScrollView>
+      <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
+        <OrdersSkeleton bottomInset={bottomInset} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView edges={["left", "right"]} style={styles.safeArea}>
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: bottomInset }]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={COLORS.primary} />}
+        showsVerticalScrollIndicator={false}
       >
         <LinearGradient
-          colors={["#FFC8CC", "#FFDEE1", "#FFF0F1"]}
+          colors={["#D1FAE5", "#6EE7B7"]}
           end={{ x: 1, y: 1 }}
           start={{ x: 0, y: 0 }}
           style={styles.hero}
@@ -173,7 +139,7 @@ export function OrdersScreen({ onRequireAuth, bottomInset = 24 }: OrdersScreenPr
               <Text style={styles.heroSubTitle}>{orders.length} total orders</Text>
             </View>
             <View style={styles.heroBadge}>
-              <Ionicons color={COLORS.surface} name="checkmark-done" size={14} />
+              <Ionicons color={COLORS.primaryDeep} name="checkmark-done" size={16} />
               <Text style={styles.heroBadgeText}>{deliveredCount} delivered</Text>
             </View>
           </View>
@@ -183,47 +149,14 @@ export function OrdersScreen({ onRequireAuth, bottomInset = 24 }: OrdersScreenPr
 
         {orders.length === 0 ? (
           <View style={styles.emptyState}>
+            <Ionicons color={COLORS.textMuted} name="cube-outline" size={64} />
             <Text style={styles.emptyTitle}>No orders yet</Text>
             <Text style={styles.emptySubtitle}>Place your first order from Shop to start tracking here.</Text>
           </View>
         ) : (
-          orders.map((order) => {
-            const statusStyle = statusStyles[order.status];
-            const topItems = order.items.slice(0, 2);
-
-            return (
-              <View key={order.id} style={styles.orderCard}>
-                <View style={styles.orderHeader}>
-                  <Text style={styles.orderNumber}>{order.orderNumber}</Text>
-                  <View style={[styles.statusPill, { backgroundColor: statusStyle.bgColor }]}>
-                    <Ionicons color={statusStyle.textColor} name={statusStyle.icon} size={12} />
-                    <Text style={[styles.statusPillText, { color: statusStyle.textColor }]}>{order.status}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.orderMetaRow}>
-                  <Ionicons color={COLORS.textMuted} name="calendar-outline" size={13} />
-                  <Text style={styles.orderMetaText}>Placed {formatDateTime(order.createdAt)}</Text>
-                </View>
-
-                <View style={styles.orderMetaRow}>
-                  <Ionicons color={COLORS.textMuted} name="bag-outline" size={13} />
-                  <Text style={styles.orderMetaText}>{order.items.length} items</Text>
-                </View>
-
-                {topItems.map((item) => (
-                  <Text key={item.id} numberOfLines={1} style={styles.orderItemPreview}>
-                    {item.quantity}x {item.productName} · {item.variantName}
-                  </Text>
-                ))}
-
-                <View style={styles.orderFooter}>
-                  <Text style={styles.orderTotal}>{formatCurrency(order.total)}</Text>
-                  <Text style={styles.orderPayment}>Payment: {order.paymentMethod}</Text>
-                </View>
-              </View>
-            );
-          })
+          <View style={styles.ordersList}>
+            {orders.map((order) => <OrderCard key={order.id} order={order} />)}
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -242,44 +175,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 20
   },
-  helperText: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 14,
-    marginTop: 8
-  },
-  skeletonBlock: {
-    backgroundColor: "#F1E4D4"
-  },
-  skeletonGapTop: {
-    marginTop: 8
-  },
-  skeletonLargeGapTop: {
-    marginTop: 12
-  },
-  skeletonRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between"
-  },
-  orderSkeletonHero: {
-    ...ELEVATION.card,
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    borderWidth: 1,
-    marginBottom: 12,
-    padding: 14
-  },
   content: {
-    paddingHorizontal: 14,
-    paddingTop: 10
+    paddingHorizontal: 16,
+    paddingTop: 16
   },
   hero: {
     ...ELEVATION.card,
-    borderRadius: 20,
-    marginBottom: 12,
-    padding: 14
+    borderRadius: 24,
+    marginBottom: 24,
+    padding: 24
   },
   heroRow: {
     alignItems: "center",
@@ -289,147 +193,61 @@ const styles = StyleSheet.create({
   heroTitle: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
-    fontSize: 22,
-    fontWeight: "700"
+    fontSize: 24,
+    fontWeight: "800"
   },
   heroSubTitle: {
-    color: COLORS.textSecondary,
+    color: COLORS.textPrimary,
     fontFamily: FONTS.body,
-    fontSize: 12,
-    marginTop: 2
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 4,
+    opacity: 0.8
   },
   heroBadge: {
     alignItems: "center",
-    backgroundColor: COLORS.danger,
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
     borderRadius: 999,
     flexDirection: "row",
-    paddingHorizontal: 10,
-    paddingVertical: 5
+    paddingHorizontal: 12,
+    paddingVertical: 8
   },
   heroBadgeText: {
-    color: COLORS.surface,
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    fontWeight: "700",
-    marginLeft: 4
+    color: COLORS.textPrimary,
+    fontFamily: FONTS.heading,
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 6
   },
   errorText: {
     color: COLORS.danger,
     fontFamily: FONTS.body,
     fontSize: 13,
-    marginBottom: 8
+    marginBottom: 16
   },
   emptyState: {
-    ...ELEVATION.card,
     alignItems: "center",
     backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 18
+    borderRadius: 24,
+    paddingVertical: 64,
+    paddingHorizontal: 24,
+    marginTop: 16,
   },
   emptyTitle: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
-    fontSize: 17,
-    fontWeight: "700",
-    marginTop: 6
+    fontSize: 20,
+    fontWeight: "800",
+    marginTop: 16
   },
   emptySubtitle: {
     color: COLORS.textSecondary,
     fontFamily: FONTS.body,
-    fontSize: 13,
-    marginTop: 4,
+    fontSize: 15,
+    marginTop: 8,
     textAlign: "center"
   },
-  orderCard: {
-    ...ELEVATION.card,
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 10,
-    padding: 12
-  },
-  orderHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8
-  },
-  orderNumber: {
-    color: COLORS.textPrimary,
-    flex: 1,
-    fontFamily: FONTS.mono,
-    fontSize: 12,
-    fontWeight: "700",
-    marginRight: 8
-  },
-  statusPill: {
-    alignItems: "center",
-    borderRadius: 999,
-    flexDirection: "row",
-    paddingHorizontal: 8,
-    paddingVertical: 4
-  },
-  statusPillText: {
-    fontFamily: FONTS.body,
-    fontSize: 10,
-    fontWeight: "700",
-    marginLeft: 3
-  },
-  orderMetaRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    marginBottom: 5
-  },
-  orderMetaText: {
-    color: COLORS.textMuted,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    marginLeft: 6
-  },
-  orderItemPreview: {
-    color: COLORS.textSecondary,
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    marginTop: 2
-  },
-  orderFooter: {
-    alignItems: "center",
-    borderTopColor: COLORS.border,
-    borderTopWidth: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 10,
-    paddingTop: 8
-  },
-  orderTotal: {
-    color: COLORS.textPrimary,
-    fontFamily: FONTS.heading,
-    fontSize: 16,
-    fontWeight: "700"
-  },
-  orderPayment: {
-    color: COLORS.textMuted,
-    fontFamily: FONTS.body,
-    fontSize: 11
-  },
-  primaryButton: {
-    alignItems: "center",
-    backgroundColor: COLORS.primary,
-    borderRadius: 10,
-    marginTop: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 11
-  },
-  primaryButtonText: {
-    color: COLORS.surface,
-    fontFamily: FONTS.body,
-    fontSize: 14,
-    fontWeight: "800"
-  },
-  pressed: {
-    opacity: 0.84
+  ordersList: {
+    gap: 16
   }
 });
