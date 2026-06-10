@@ -134,7 +134,15 @@ export function AccountScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Settings</Text>
+          <Text style={[styles.sectionTitle, { marginBottom: 16 }]}>Settings</Text>
+
+          <Pressable style={styles.actionRow} onPress={() => navigation.navigate("Wishlist")}>
+            <View style={styles.actionLabelWrap}>
+              <Ionicons color={COLORS.info} name="heart" size={20} />
+              <Text style={styles.actionText}>My Wishlist</Text>
+            </View>
+            <Ionicons color={COLORS.textMuted} name="chevron-forward" size={20} />
+          </Pressable>
 
           <Pressable style={styles.actionRow} onPress={() => navigation.navigate("Addresses")}>
             <View style={styles.actionLabelWrap}>
@@ -146,7 +154,7 @@ export function AccountScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Support</Text>
+          <Text style={[styles.sectionTitle, { marginBottom: 16 }]}>Support</Text>
 
           <Pressable style={styles.actionRow} onPress={() => navigation.navigate("HelpSupport")}>
             <View style={styles.actionLabelWrap}>

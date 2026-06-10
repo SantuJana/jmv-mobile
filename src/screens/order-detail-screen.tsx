@@ -198,7 +198,11 @@ export function OrderDetailScreen() {
           <Text style={styles.cardTitle}>Items Ordered</Text>
           <View style={styles.itemsContainer}>
             {order.items.map((item) => (
-              <View key={item.id} style={styles.itemRow}>
+              <Pressable 
+                key={item.id} 
+                style={styles.itemRow}
+                onPress={() => navigation.navigate("ProductDetail", { product: item.product as any })}
+              >
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemName}>{item.productName}</Text>
                   <Text style={styles.itemVariant}>
@@ -215,7 +219,7 @@ export function OrderDetailScreen() {
                   </View>
                 </View>
                 <Text style={styles.itemTotal}>{formatCurrency(parseFloat(item.total))}</Text>
-              </View>
+              </Pressable>
             ))}
           </View>
         </View>

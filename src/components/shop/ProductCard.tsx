@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { formatCurrency } from "../../lib/format";
 import { findBestOfferVariant, getProductCardImageUri, getVariantDiscountLabel } from "../../lib/product-utils";
 import { CartDropSource, getCartDropSourceFromEvent } from "../../lib/ui-utils";
+import { useWishlist } from "../../providers/wishlist-provider";
 import { COLORS, ELEVATION, FONTS } from "../../theme/design";
 import type { Product, ProductVariant } from "../../types/api";
 
@@ -25,6 +26,8 @@ export function ProductCard({
   const discountLabel = getVariantDiscountLabel(bestOfferVariant);
   const isOutOfStock = !bestOfferVariant || variants.every((variant) => variant.stock <= 0);
   const isAddingAnyVariant = variants.some((variant) => addingVariantId === variant.id);
+  const { isWishlisted, toggleWishlist } = useWishlist();
+  const wishlisted = isWishlisted(product.id);
 
   return (
     <View style={styles.card}>
@@ -46,14 +49,20 @@ export function ProductCard({
         {discountLabel ? <Text style={styles.discountBadge}>{discountLabel}</Text> : null}
       </Pressable>
 
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => void toggleWishlist(product.id)}
+        style={styles.wishlistButton}
+      >
+        <Ionicons 
+          color={wishlisted ? COLORS.danger : COLORS.textMuted} 
+          name={wishlisted ? "heart" : "heart-outline"} 
+          size={20} 
+        />
+      </Pressable>
+
       <View style={styles.body}>
         <Pressable accessibilityRole="button" onPress={() => onProductPress(product)}>
-          <View style={styles.metaPill}>
-            <Text numberOfLines={1} style={styles.meta}>
-              {product.category.name}
-            </Text>
-          </View>
-
           <Text numberOfLines={2} style={styles.name}>
             {product.name}
           </Text>
@@ -121,7 +130,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   imageContainer: {
-    height: 110,
+    height: 140,
     backgroundColor: COLORS.surfaceMuted,
     justifyContent: "center",
     alignItems: "center",
@@ -136,24 +145,22 @@ const styles = StyleSheet.create({
   placeholder: {
     opacity: 0.5,
   },
+  wishlistButton: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...ELEVATION.floating,
+  },
   body: {
     padding: 12,
     flex: 1,
     justifyContent: "space-between",
-  },
-  metaPill: {
-    backgroundColor: COLORS.chipBg,
-    alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  meta: {
-    fontFamily: FONTS.body,
-    fontSize: 10,
-    fontWeight: "700",
-    color: COLORS.primaryDeep,
   },
   name: {
     fontFamily: FONTS.heading,

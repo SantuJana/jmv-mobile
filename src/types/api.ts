@@ -133,6 +133,22 @@ export type Cart = {
   totalItems: number;
 };
 
+export type WishlistItem = {
+  id: string;
+  wishlistId: string;
+  productId: string;
+  createdAt: string;
+  product: Product;
+};
+
+export type Wishlist = {
+  id: string;
+  userId: string;
+  items: WishlistItem[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Coupon = {
   id: string;
   code: string;
@@ -173,6 +189,18 @@ export type OrderItem = {
   unitPrice: string;
   total: string;
   createdAt: string;
+  product: {
+    id: string;
+    name: string;
+    slug: string;
+    imageUrl: string | null;
+    isActive: boolean;
+    category: {
+      id: string;
+      name: string;
+      slug: string;
+    };
+  };
 };
 
 export type Order = {

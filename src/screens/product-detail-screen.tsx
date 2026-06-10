@@ -22,6 +22,7 @@ import { apiClient, getErrorMessage } from "../lib/api-client";
 import { formatCurrency } from "../lib/format";
 import { findBestOfferVariant, getProductCardImageUri, getVariantDiscountLabel } from "../lib/product-utils";
 import { useAuth } from "../providers/auth-provider";
+import { useWishlist } from "../providers/wishlist-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
 import type { ApiResponse, Cart, Product, ProductVariant } from "../types/api";
 import type { RootStackParamList } from "../navigation/types";
@@ -39,6 +40,9 @@ export function ProductDetailScreen({ navigation, route }: Props) {
   const [isLoadingVariants, setIsLoadingVariants] = useState(true);
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { isWishlisted, toggleWishlist } = useWishlist();
+  const wishlisted = isWishlisted(product.id);
 
   const selectedVariant = useMemo(
     () => variants.find((v) => v.id === selectedVariantId) ?? null,
@@ -127,6 +131,21 @@ export function ProductDetailScreen({ navigation, route }: Props) {
             ]}
           >
             <Ionicons color={COLORS.textPrimary} name="close" size={24} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => void toggleWishlist(product.id)}
+            style={({ pressed }) => [
+              styles.wishlistButton,
+              { top: Math.max(insets.top, 20) },
+              pressed && styles.pressed
+            ]}
+          >
+            <Ionicons 
+              color={wishlisted ? COLORS.danger : COLORS.textPrimary} 
+              name={wishlisted ? "heart" : "heart-outline"} 
+              size={24} 
+            />
           </Pressable>
         </View>
 
@@ -283,6 +302,17 @@ const styles = StyleSheet.create({
   backButton: {
     position: "absolute",
     left: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    alignItems: "center",
+    justifyContent: "center",
+    ...ELEVATION.card
+  },
+  wishlistButton: {
+    position: "absolute",
+    right: 20,
     width: 44,
     height: 44,
     borderRadius: 22,
