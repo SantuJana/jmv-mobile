@@ -20,7 +20,7 @@ import { SkeletonBlock } from "../components/common/SkeletonBlock";
 
 import { apiClient, getErrorMessage } from "../lib/api-client";
 import { formatCurrency } from "../lib/format";
-import { findBestOfferVariant, getProductCardImageUri, getVariantDiscountLabel } from "../lib/product-utils";
+import { findBestOfferVariant, getProductDetailImageUri, getVariantDiscountLabel } from "../lib/product-utils";
 import { useAuth } from "../providers/auth-provider";
 import { useWishlist } from "../providers/wishlist-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
@@ -32,7 +32,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "ProductDetail">;
 export function ProductDetailScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { product } = route.params;
-  const imageUri = getProductCardImageUri(product);
+  const imageUri = getProductDetailImageUri(product);
 
   const { isAuthenticated, authorizedRequest } = useAuth();
   const [variants, setVariants] = useState<ProductVariant[]>([]);

@@ -1,5 +1,7 @@
 import { Product, ProductVariant } from "../types/api";
 
+type ProductImageSource = Pick<Product, "imageUrl" | "imageUrls">;
+
 export const findBestOfferVariant = (variants: ProductVariant[]) => {
   if (variants.length === 0) {
     return null;
@@ -25,8 +27,14 @@ export const findBestOfferVariant = (variants: ProductVariant[]) => {
   }, variants[0]);
 };
 
-export const getProductCardImageUri = (product: Product | null | undefined) =>
+export const getProductCardImageUri = (product: ProductImageSource | null | undefined) =>
   product?.imageUrls?.card ?? product?.imageUrls?.detail ?? product?.imageUrls?.thumbnail ?? product?.imageUrl;
+
+export const getProductDetailImageUri = (product: ProductImageSource | null | undefined) =>
+  product?.imageUrls?.detail ?? product?.imageUrls?.card ?? product?.imageUrls?.thumbnail ?? product?.imageUrl;
+
+export const getProductThumbnailImageUri = (product: ProductImageSource | null | undefined) =>
+  product?.imageUrls?.thumbnail ?? product?.imageUrls?.card ?? product?.imageUrls?.detail ?? product?.imageUrl;
 
 export const getVariantDiscountLabel = (variant: Pick<ProductVariant, "mrp" | "price"> | null | undefined) => {
   if (!variant) {
