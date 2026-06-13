@@ -11,6 +11,7 @@ import { PrivacyPolicyScreen } from "../screens/privacy-policy-screen";
 import { EditProfileScreen } from "../screens/edit-profile-screen";
 import { AuthProvider } from "../providers/auth-provider";
 import { WishlistProvider } from "../providers/wishlist-provider";
+import { PushNotificationManager } from "../hooks/usePushNotifications";
 import type { RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -20,6 +21,7 @@ export function RootNavigator() {
     <AuthProvider>
       <WishlistProvider>
         <NavigationContainer>
+          <PushNotificationManager />
           <Stack.Navigator screenOptions={{ headerShown: false, presentation: "modal" }}>
             <Stack.Screen name="Main" component={MainTabs} />
             <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
