@@ -2,6 +2,7 @@ import { Product, ProductVariant } from "../types/api";
 
 type ProductImageSource = Pick<Product, "imageUrl" | "imageUrls">;
 type ProductDetailImageSource = ProductImageSource & Pick<Product, "detailImages">;
+type VariantImageSource = Pick<ProductVariant, "imageUrl" | "imageUrls" | "detailImages">;
 
 export const findBestOfferVariant = (variants: ProductVariant[]) => {
   if (variants.length === 0) {
@@ -34,6 +35,12 @@ export const getProductCardImageUri = (product: ProductImageSource | null | unde
 export const getProductDetailImageUri = (product: ProductImageSource | null | undefined) =>
   product?.imageUrls?.detail ?? product?.imageUrls?.card ?? product?.imageUrls?.thumbnail ?? product?.imageUrl;
 
+const getVariantOnlyDetailImageUri = (variant: VariantImageSource | null | undefined) =>
+  variant?.imageUrl ??
+  variant?.imageUrls?.detail ??
+  variant?.imageUrls?.card ??
+  variant?.imageUrls?.thumbnail;
+
 export const getProductDetailImageUris = (product: ProductDetailImageSource | null | undefined) => {
   const mainImageUri = getProductDetailImageUri(product);
   const detailImageUris = (product?.detailImages ?? [])
@@ -49,6 +56,52 @@ export const getProductDetailImageUris = (product: ProductDetailImageSource | nu
 
 export const getProductThumbnailImageUri = (product: ProductImageSource | null | undefined) =>
   product?.imageUrls?.thumbnail ?? product?.imageUrls?.card ?? product?.imageUrls?.detail ?? product?.imageUrl;
+
+export const getVariantCardImageUri = (
+  variant: VariantImageSource | null | undefined,
+  product: ProductImageSource | null | undefined
+) => {
+  return (
+    variant?.imageUrl ??
+    variant?.imageUrls?.card ??
+    variant?.imageUrls?.detail ??
+    variant?.imageUrls?.thumbnail ??
+    getProductCardImageUri(product)
+  );
+};
+
+export const getVariantDetailImageUri = (
+  variant: VariantImageSource | null | undefined,
+  product: ProductImageSource | null | undefined
+) =>
+  getVariantOnlyDetailImageUri(variant) ?? getProductDetailImageUri(product);
+
+export const getVariantDetailImageUris = (
+  variant: VariantImageSource | null | undefined,
+  product: ProductDetailImageSource | null | undefined
+) => {
+  const variantDetailImageUris = (variant?.detailImages ?? [])
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((image) => image.imageUrl)
+    .filter((imageUrl): imageUrl is string => Boolean(imageUrl));
+  const variantMainImageUri = getVariantOnlyDetailImageUri(variant);
+  const variantImageUris = Array.from(
+    new Set([variantMainImageUri, ...variantDetailImageUris].filter((imageUrl): imageUrl is string => Boolean(imageUrl)))
+  );
+
+  return variantImageUris.length > 0 ? variantImageUris : getProductDetailImageUris(product);
+};
+
+export const getVariantThumbnailImageUri = (
+  variant: VariantImageSource | null | undefined,
+  product: ProductImageSource | null | undefined
+) =>
+  variant?.imageUrl ??
+  variant?.imageUrls?.thumbnail ??
+  variant?.imageUrls?.card ??
+  variant?.imageUrls?.detail ??
+  getProductThumbnailImageUri(product);
 
 export const getVariantDiscountLabel = (variant: Pick<ProductVariant, "mrp" | "price"> | null | undefined) => {
   if (!variant) {

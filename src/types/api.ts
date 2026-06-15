@@ -71,6 +71,10 @@ export type ProductVariant = {
   stock: number;
   sku: string;
   unit: string;
+  imageUrl: string | null;
+  imagePublicId: string | null;
+  imageUrls?: ImageUrls;
+  detailImages?: ProductDetailImage[];
   isActive: boolean;
 };
 
@@ -115,6 +119,10 @@ export type CartItem = {
     offerPrice?: string;
     sku: string;
     unit: string;
+    imageUrl: string | null;
+    imagePublicId: string | null;
+    imageUrls?: ImageUrls;
+    detailImages?: ProductDetailImage[];
     stock: number;
     isActive: boolean;
   };
@@ -208,6 +216,15 @@ export type OrderItem = {
       name: string;
       slug: string;
     };
+  };
+  variant?: {
+    id: string;
+    imageUrl: string | null;
+    imagePublicId: string | null;
+    imageUrls?: ImageUrls;
+    detailImages?: ProductDetailImage[];
+    stock: number;
+    isActive: boolean;
   };
 };
 

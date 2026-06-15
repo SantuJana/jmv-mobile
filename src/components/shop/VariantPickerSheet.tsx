@@ -1,9 +1,9 @@
-import { ActivityIndicator, Animated, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, Image, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { formatCurrency } from "../../lib/format";
-import { getProductCardImageUri, getVariantDiscountLabel } from "../../lib/product-utils";
+import { getVariantCardImageUri, getVariantDiscountLabel, getVariantThumbnailImageUri } from "../../lib/product-utils";
 import { CartDropSource, getCartDropSourceFromEvent } from "../../lib/ui-utils";
 import { COLORS, ELEVATION, FONTS } from "../../theme/design";
 import type { Product, ProductVariant } from "../../types/api";
@@ -135,6 +135,7 @@ export function VariantPickerSheet({
             {variants.map((variant) => {
               const isSelected = selectedVariantId === variant.id;
               const discountLabel = getVariantDiscountLabel(variant);
+              const imageUri = getVariantThumbnailImageUri(variant, product);
 
               return (
                 <Pressable
@@ -142,23 +143,34 @@ export function VariantPickerSheet({
                   onPress={() => onSelectVariant(variant.id)}
                   style={[styles.option, isSelected && styles.optionSelected]}
                 >
-                  <View style={styles.optionTop}>
-                    <Text style={[styles.optionName, isSelected && styles.optionNameSelected]}>
-                      {variant.name}
-                    </Text>
-                  <View style={styles.optionPriceWrap}>
-                      <Text style={[styles.optionPrice, isSelected && styles.optionPriceSelected]}>
-                        {formatCurrency(variant.price)}
+                  <View style={styles.optionContent}>
+                    {imageUri ? (
+                      <Image source={{ uri: imageUri }} style={styles.optionImage} />
+                    ) : (
+                      <View style={styles.optionImagePlaceholder}>
+                        <Ionicons color={COLORS.textMuted} name="image-outline" size={18} />
+                      </View>
+                    )}
+                    <View style={styles.optionBody}>
+                      <View style={styles.optionTop}>
+                        <Text style={[styles.optionName, isSelected && styles.optionNameSelected]}>
+                          {variant.name}
+                        </Text>
+                        <View style={styles.optionPriceWrap}>
+                          <Text style={[styles.optionPrice, isSelected && styles.optionPriceSelected]}>
+                            {formatCurrency(variant.price)}
+                          </Text>
+                          {variant.mrp && variant.mrp !== variant.price ? (
+                            <Text style={styles.optionMrp}>{formatCurrency(variant.mrp)}</Text>
+                          ) : null}
+                          {discountLabel ? <Text style={styles.optionDiscount}>{discountLabel}</Text> : null}
+                        </View>
+                      </View>
+                      <Text style={[styles.optionMeta, isSelected && styles.optionMetaSelected]}>
+                        {variant.unit} · Stock {variant.stock}
                       </Text>
-                      {variant.mrp && variant.mrp !== variant.price ? (
-                        <Text style={styles.optionMrp}>{formatCurrency(variant.mrp)}</Text>
-                      ) : null}
-                      {discountLabel ? <Text style={styles.optionDiscount}>{discountLabel}</Text> : null}
                     </View>
                   </View>
-                  <Text style={[styles.optionMeta, isSelected && styles.optionMetaSelected]}>
-                    {variant.unit} · Stock {variant.stock}
-                  </Text>
                 </Pressable>
               );
             })}
@@ -167,7 +179,7 @@ export function VariantPickerSheet({
           <Pressable
             disabled={!selectedVariant || isAdding}
             onPress={(event) =>
-              onConfirm(getCartDropSourceFromEvent(event, getProductCardImageUri(product)))
+              onConfirm(getCartDropSourceFromEvent(event, getVariantCardImageUri(selectedVariant, product)))
             }
             style={({ pressed }) => [
               styles.addButton,
@@ -254,11 +266,34 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 16,
     borderWidth: 1.5,
-    padding: 16,
+    padding: 12,
   },
   optionSelected: {
     backgroundColor: COLORS.chipBg,
     borderColor: COLORS.primary,
+  },
+  optionContent: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  optionImage: {
+    backgroundColor: COLORS.surfaceMuted,
+    borderRadius: 12,
+    height: 52,
+    width: 52,
+  },
+  optionImagePlaceholder: {
+    alignItems: "center",
+    backgroundColor: COLORS.surfaceMuted,
+    borderRadius: 12,
+    height: 52,
+    justifyContent: "center",
+    width: 52,
+  },
+  optionBody: {
+    flex: 1,
+    minWidth: 0,
   },
   optionTop: {
     alignItems: "center",

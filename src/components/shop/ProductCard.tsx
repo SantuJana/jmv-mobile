@@ -1,7 +1,7 @@
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { formatCurrency } from "../../lib/format";
-import { findBestOfferVariant, getProductCardImageUri, getVariantDiscountLabel } from "../../lib/product-utils";
+import { findBestOfferVariant, getVariantCardImageUri, getVariantDiscountLabel } from "../../lib/product-utils";
 import { CartDropSource, getCartDropSourceFromEvent } from "../../lib/ui-utils";
 import { useWishlist } from "../../providers/wishlist-provider";
 import { COLORS, ELEVATION, FONTS } from "../../theme/design";
@@ -20,9 +20,9 @@ export function ProductCard({
   onPressAddForProduct,
   addingVariantId
 }: ProductCardProps) {
-  const imageUri = getProductCardImageUri(product);
   const variants = product.variants.filter((variant) => variant.isActive);
   const bestOfferVariant = findBestOfferVariant(variants);
+  const imageUri = getVariantCardImageUri(bestOfferVariant, product);
   const discountLabel = getVariantDiscountLabel(bestOfferVariant);
   const isOutOfStock = !bestOfferVariant || variants.every((variant) => variant.stock <= 0);
   const isAddingAnyVariant = variants.some((variant) => addingVariantId === variant.id);

@@ -20,7 +20,12 @@ import { SkeletonBlock } from "../components/common/SkeletonBlock";
 
 import { apiClient, getErrorMessage } from "../lib/api-client";
 import { formatCurrency } from "../lib/format";
-import { findBestOfferVariant, getProductDetailImageUris, getVariantDiscountLabel } from "../lib/product-utils";
+import {
+  findBestOfferVariant,
+  getVariantDetailImageUris,
+  getVariantDiscountLabel,
+  getVariantThumbnailImageUri
+} from "../lib/product-utils";
 import { useAuth } from "../providers/auth-provider";
 import { useWishlist } from "../providers/wishlist-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
@@ -43,12 +48,12 @@ export function ProductDetailScreen({ navigation, route }: Props) {
 
   const { isWishlisted, toggleWishlist } = useWishlist();
   const wishlisted = isWishlisted(product.id);
-  const imageUris = getProductDetailImageUris(productDetails);
 
   const selectedVariant = useMemo(
     () => variants.find((v) => v.id === selectedVariantId) ?? null,
     [variants, selectedVariantId]
   );
+  const imageUris = useMemo(() => getVariantDetailImageUris(selectedVariant, productDetails), [productDetails, selectedVariant]);
 
   useEffect(() => {
     let isMounted = true;
@@ -176,6 +181,7 @@ export function ProductDetailScreen({ navigation, route }: Props) {
                 const isSelected = variant.id === selectedVariantId;
                 const isOutOfStock = variant.stock <= 0;
                 const discountLabel = getVariantDiscountLabel(variant);
+                const variantImageUri = getVariantThumbnailImageUri(variant, productDetails);
 
                 return (
                   <Pressable
@@ -188,6 +194,13 @@ export function ProductDetailScreen({ navigation, route }: Props) {
                       isOutOfStock && styles.variantItemDisabled
                     ]}
                   >
+                    {variantImageUri ? (
+                      <Image source={{ uri: variantImageUri }} style={styles.variantImage} />
+                    ) : (
+                      <View style={styles.variantImagePlaceholder}>
+                        <Ionicons color={COLORS.textMuted} name="image-outline" size={18} />
+                      </View>
+                    )}
                     <View style={styles.variantInfo}>
                       <Text style={[styles.variantName, isSelected && styles.variantNameSelected]}>
                         {variant.name}
@@ -408,6 +421,22 @@ const styles = StyleSheet.create({
   variantItemDisabled: {
     opacity: 0.5,
     backgroundColor: COLORS.surfaceMuted
+  },
+  variantImage: {
+    backgroundColor: COLORS.surfaceMuted,
+    borderRadius: 12,
+    height: 52,
+    marginRight: 12,
+    width: 52
+  },
+  variantImagePlaceholder: {
+    alignItems: "center",
+    backgroundColor: COLORS.surfaceMuted,
+    borderRadius: 12,
+    height: 52,
+    justifyContent: "center",
+    marginRight: 12,
+    width: 52
   },
   variantInfo: {
     flex: 1

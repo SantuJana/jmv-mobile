@@ -1,7 +1,7 @@
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { formatCurrency } from "../../lib/format";
-import { getProductThumbnailImageUri, getVariantDiscountLabel } from "../../lib/product-utils";
+import { getVariantDiscountLabel, getVariantThumbnailImageUri } from "../../lib/product-utils";
 import { COLORS, FONTS } from "../../theme/design";
 import type { CartItem } from "../../types/api";
 
@@ -13,7 +13,7 @@ type CartItemCardProps = {
 };
 
 export function CartItemCard({ item, isBusy, onUpdateQuantity, onRemove }: CartItemCardProps) {
-  const imageUri = getProductThumbnailImageUri(item.product);
+  const imageUri = getVariantThumbnailImageUri(item.variant, item.product);
   const canDecrease = item.quantity > 1;
   const offerPrice = item.variant.offerPrice ?? item.variant.price ?? item.unitPrice;
   const hasDiscount = item.variant.mrp && Number(item.variant.mrp) > Number(offerPrice);
