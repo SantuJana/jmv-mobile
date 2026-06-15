@@ -1,6 +1,7 @@
 import { Product, ProductVariant } from "../types/api";
 
 type ProductImageSource = Pick<Product, "imageUrl" | "imageUrls">;
+type ProductDetailImageSource = ProductImageSource & Pick<Product, "detailImages">;
 
 export const findBestOfferVariant = (variants: ProductVariant[]) => {
   if (variants.length === 0) {
@@ -32,6 +33,19 @@ export const getProductCardImageUri = (product: ProductImageSource | null | unde
 
 export const getProductDetailImageUri = (product: ProductImageSource | null | undefined) =>
   product?.imageUrls?.detail ?? product?.imageUrls?.card ?? product?.imageUrls?.thumbnail ?? product?.imageUrl;
+
+export const getProductDetailImageUris = (product: ProductDetailImageSource | null | undefined) => {
+  const mainImageUri = getProductDetailImageUri(product);
+  const detailImageUris = (product?.detailImages ?? [])
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((image) => image.imageUrl)
+    .filter((imageUrl): imageUrl is string => Boolean(imageUrl));
+
+  return Array.from(
+    new Set([mainImageUri, ...detailImageUris].filter((imageUrl): imageUrl is string => Boolean(imageUrl)))
+  );
+};
 
 export const getProductThumbnailImageUri = (product: ProductImageSource | null | undefined) =>
   product?.imageUrls?.thumbnail ?? product?.imageUrls?.card ?? product?.imageUrls?.detail ?? product?.imageUrl;

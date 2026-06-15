@@ -47,3 +47,4 @@ yarn-error.*
 jmv-store-7ed4b-firebase-adminsdk-fbsvc-d60ce16052.json
 google-services.json
 *-firebase-adminsdk-*.json
+*.apk

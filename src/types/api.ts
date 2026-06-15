@@ -83,6 +83,7 @@ export type Product = {
   imageUrl: string | null;
   imagePublicId: string | null;
   imageUrls?: ImageUrls;
+  detailImages?: ProductDetailImage[];
   isActive: boolean;
   category: {
     id: string;
@@ -91,6 +92,13 @@ export type Product = {
     isActive: boolean;
   };
   variants: ProductVariant[];
+};
+
+export type ProductDetailImage = {
+  id: string;
+  imageUrl: string;
+  imagePublicId: string;
+  sortOrder: number;
 };
 
 export type CartItem = {

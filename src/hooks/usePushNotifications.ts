@@ -11,16 +11,18 @@ import type { RootStackParamList } from "../navigation/types";
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
-    shouldSetBadge: true,
+    shouldSetBadge: true
   }),
 });
 
 export function usePushNotifications() {
   const { isAuthenticated, authorizedRequest } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const notificationListener = useRef<Notifications.Subscription>();
-  const responseListener = useRef<Notifications.Subscription>();
+  const notificationListener = useRef<Notifications.Subscription | null>(null);
+  const responseListener = useRef<Notifications.Subscription | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -127,7 +129,7 @@ export function usePushNotifications() {
         responseListener.current.remove();
       }
     };
-  }, [isAuthenticated, authorizedRequest]);
+  }, [isAuthenticated, authorizedRequest, navigation]);
 }
 
 export function PushNotificationManager() {

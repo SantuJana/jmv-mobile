@@ -24,9 +24,37 @@ Set `EXPO_PUBLIC_API_BASE_URL` in `.env` based on where the app runs:
 - `npm run android` - run app in Android emulator
 - `npm run ios` - run app in iOS simulator
 - `npm run web` - run app in web preview
+- `npm run start:dev` - start Expo for an installed development build
+- `npm run build:android:development` - create an Android development build with Expo Dev Client
+- `npm run build:ios:simulator` - create an iOS simulator development build with Expo Dev Client
 - `npm run build:android:preview` - create an installable Android APK that does not need an Expo dev server
 - `npm run build:android:production` - create an Android App Bundle for store upload
 - `npm run typecheck` - run TypeScript checks
+
+## Development Build
+
+If Expo shows this error:
+
+```text
+CommandError: No development build (com.jmv.mobile) for this project is installed.
+```
+
+install a development build first, then start the dev client:
+
+```bash
+npx eas-cli login
+npm run build:android:development
+npm run start:dev
+```
+
+When the Android build finishes, EAS will provide an APK download link. Install that APK on the target device, then open it while `npm run start:dev` is running.
+
+For the iOS simulator:
+
+```bash
+npm run build:ios:simulator
+npm run start:dev
+```
 
 ## Installable Test Build
 

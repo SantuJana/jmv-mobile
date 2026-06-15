@@ -13,14 +13,14 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { SkeletonBlock } from "../components/common/SkeletonBlock";
 
 import { apiClient, getErrorMessage } from "../lib/api-client";
 import { formatCurrency } from "../lib/format";
-import { findBestOfferVariant, getProductDetailImageUri, getVariantDiscountLabel } from "../lib/product-utils";
+import { findBestOfferVariant, getProductDetailImageUris, getVariantDiscountLabel } from "../lib/product-utils";
 import { useAuth } from "../providers/auth-provider";
 import { useWishlist } from "../providers/wishlist-provider";
 import { COLORS, ELEVATION, FONTS } from "../theme/design";
@@ -32,9 +32,9 @@ type Props = NativeStackScreenProps<RootStackParamList, "ProductDetail">;
 export function ProductDetailScreen({ navigation, route }: Props) {
   const insets = useSafeAreaInsets();
   const { product } = route.params;
-  const imageUri = getProductDetailImageUri(product);
 
   const { isAuthenticated, authorizedRequest } = useAuth();
+  const [productDetails, setProductDetails] = useState<Product>(product);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   const [isLoadingVariants, setIsLoadingVariants] = useState(true);
@@ -43,6 +43,7 @@ export function ProductDetailScreen({ navigation, route }: Props) {
 
   const { isWishlisted, toggleWishlist } = useWishlist();
   const wishlisted = isWishlisted(product.id);
+  const imageUris = getProductDetailImageUris(productDetails);
 
   const selectedVariant = useMemo(
     () => variants.find((v) => v.id === selectedVariantId) ?? null,
@@ -60,7 +61,9 @@ export function ProductDetailScreen({ navigation, route }: Props) {
           `/products/${product.id}`
         );
         if (isMounted) {
-          const activeVariants = response.data.product.variants.filter((v) => v.isActive);
+          const fetchedProduct = response.data.product;
+          const activeVariants = fetchedProduct.variants.filter((v) => v.isActive);
+          setProductDetails(fetchedProduct);
           setVariants(activeVariants);
           if (activeVariants.length > 0) {
             setSelectedVariantId(findBestOfferVariant(activeVariants)?.id ?? activeVariants[0].id);
@@ -114,8 +117,8 @@ export function ProductDetailScreen({ navigation, route }: Props) {
         bounces={false}
       >
         <View style={styles.imageHeader}>
-          {imageUri ? (
-            <ProductImageCarousel imageUri={imageUri} />
+          {imageUris.length > 0 ? (
+            <ProductImageCarousel imageUris={imageUris} />
           ) : (
             <View style={styles.imagePlaceholder}>
               <Ionicons color={COLORS.textMuted} name="image-outline" size={64} />
@@ -151,11 +154,11 @@ export function ProductDetailScreen({ navigation, route }: Props) {
 
         <View style={[styles.detailsContainer, { paddingBottom: insets.bottom + 120 }]}>
           <View style={styles.metaPill}>
-            <Text style={styles.metaText}>{product.category.name}</Text>
+            <Text style={styles.metaText}>{productDetails.category.name}</Text>
           </View>
           
-          <Text style={styles.title}>{product.name}</Text>
-          {product.description ? <Text style={styles.description}>{product.description}</Text> : null}
+          <Text style={styles.title}>{productDetails.name}</Text>
+          {productDetails.description ? <Text style={styles.description}>{productDetails.description}</Text> : null}
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -537,9 +540,7 @@ const styles = StyleSheet.create({
   }
 });
 
-const CAROUSEL_IMAGE_COUNT = 3;
-
-function ProductImageCarousel({ imageUri }: { imageUri: string }) {
+function ProductImageCarousel({ imageUris }: { imageUris: string[] }) {
   const { width } = useWindowDimensions();
   const [activeIndex, setActiveIndex] = useState(0);
   const [imagesLoaded, setImagesLoaded] = useState<Record<number, boolean>>({});
@@ -548,8 +549,6 @@ function ProductImageCarousel({ imageUri }: { imageUri: string }) {
     const x = event.nativeEvent.contentOffset.x;
     setActiveIndex(Math.round(x / width));
   };
-
-  const images = Array(CAROUSEL_IMAGE_COUNT).fill(imageUri);
 
   return (
     <View style={styles.carouselContainer}>
@@ -560,8 +559,8 @@ function ProductImageCarousel({ imageUri }: { imageUri: string }) {
         onMomentumScrollEnd={handleScroll}
         scrollEventThrottle={16}
       >
-        {images.map((uri, index) => (
-          <View key={index} style={{ width, height: 380 }}>
+        {imageUris.map((uri, index) => (
+          <View key={uri} style={{ width, height: 380 }}>
             {!imagesLoaded[index] && (
               <View style={StyleSheet.absoluteFill}>
                 <SkeletonBlock height={380} radius={0} />
@@ -576,17 +575,19 @@ function ProductImageCarousel({ imageUri }: { imageUri: string }) {
           </View>
         ))}
       </ScrollView>
-      <View style={styles.paginationDots}>
-        {images.map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.dot,
-              index === activeIndex && styles.activeDot
-            ]}
-          />
-        ))}
-      </View>
+      {imageUris.length > 1 ? (
+        <View style={styles.paginationDots}>
+          {imageUris.map((uri, index) => (
+            <View
+              key={uri}
+              style={[
+                styles.dot,
+                index === activeIndex && styles.activeDot
+              ]}
+            />
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
